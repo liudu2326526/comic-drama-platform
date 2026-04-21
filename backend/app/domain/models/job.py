@@ -1,0 +1,40 @@
+from datetime import datetime
+
+from sqlalchemy import CHAR, DateTime, Enum, Index, JSON, SmallInteger, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.domain.models.base import Base, TimestampMixin
+from app.infra.ulid import new_id
+
+JOB_KIND_VALUES = [
+    "parse_novel",
+    "gen_storyboard",
+    "gen_character_asset",
+    "gen_scene_asset",
+    "render_shot",
+    "render_batch",
+    "export_video",
+]
+JOB_STATUS_VALUES = ["queued", "running", "succeeded", "failed", "canceled"]
+
+
+class Job(Base, TimestampMixin):
+    __tablename__ = "jobs"
+    __table_args__ = (Index("ix_jobs_project_id", "project_id"),)
+
+    id: Mapped[str] = mapped_column(CHAR(26), primary_key=True, default=new_id)
+    project_id: Mapped[str | None] = mapped_column(CHAR(26), nullable=True)
+    kind: Mapped[str] = mapped_column(Enum(*JOB_KIND_VALUES, name="job_kind"), nullable=False)
+    target_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    target_id: Mapped[str | None] = mapped_column(CHAR(26), nullable=True)
+    celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(
+        Enum(*JOB_STATUS_VALUES, name="job_status"), nullable=False, default="queued"
+    )
+    progress: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    total: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    done: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_msg: Mapped[str | None] = mapped_column(Text, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
