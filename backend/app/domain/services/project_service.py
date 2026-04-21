@@ -26,6 +26,7 @@ class ProjectService:
         )
         self.session.add(project)
         await self.session.flush()
+        await self.session.refresh(project)
         return project
 
     async def get(self, project_id: str) -> Project:
