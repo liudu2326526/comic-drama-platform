@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comic-drama-backend"
+version = "0.1.0"
+description = "漫剧生成平台后端"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.110.0",
+  "uvicorn[standard]==0.29.0",
+  "sqlalchemy[asyncio]==2.0.29",
+  "asyncmy==0.2.9",
+  "alembic==1.13.1",
+  "pydantic==2.6.4",
+  "pydantic-settings==2.2.1",
+  "celery==5.3.6",
+  "redis==5.0.3",
+  "python-ulid==2.2.0",
+  "structlog==24.1.0",
+  "httpx==0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.1.1",
+  "pytest-asyncio==0.23.6",
+  "pytest-cov==4.1.0",
+  "ruff==0.3.4",
+  "mypy==1.9.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["tests*", "alembic*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
