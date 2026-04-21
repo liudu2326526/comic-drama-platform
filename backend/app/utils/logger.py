@@ -1,9 +1,11 @@
 import logging
+
 import structlog
 
 
 def configure_logging(level: str = "INFO") -> None:
-    logging.basicConfig(level=level, format="%(message)s")
+    normalized = level.upper()
+    logging.basicConfig(level=normalized, format="%(message)s")
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -11,7 +13,7 @@ def configure_logging(level: str = "INFO") -> None:
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.JSONRenderer(),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, level)),
+        wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, normalized)),
     )
 
 
