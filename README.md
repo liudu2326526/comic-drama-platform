@@ -4,7 +4,7 @@
 
 - 后端设计: [`docs/superpowers/specs/2026-04-20-backend-mvp-design.md`](docs/superpowers/specs/2026-04-20-backend-mvp-design.md)
 - 前端设计: [`docs/superpowers/specs/2026-04-20-frontend-mvp-design.md`](docs/superpowers/specs/2026-04-20-frontend-mvp-design.md)
-- 分里程碑实施计划: [`docs/superpowers/plans/`](docs/superpowers/plans/)
+- 分里程碑实施计划: [`docs/superpowers/plans/`](docs/superpowers/plans/)（当前已覆盖 M1 / M2 / M3a，以及 M3b 设计与执行计划）
 
 ---
 
@@ -20,8 +20,8 @@ comic-drama-platform/
 │   ├── huoshan_api/      火山引擎 Ark 接口备忘
 │   ├── huawei_api/       华为云 OBS 接口备忘
 │   └── integrations/     其它第三方集成资料
-├── CLAUDE.md             Claude Code 在本仓库的工作规约（架构约束 / 常用命令）
-└── AGENTS.md             预留（当前为空，勿读取）
+├── CLAUDE.md             仓库级工程规约（架构约束 / 常用命令 / 异步任务约束）
+└── AGENTS.md             与 CLAUDE.md 同步的仓库级工作规约入口
 ```
 
 ---
@@ -50,9 +50,10 @@ comic-drama-platform/
 | **M1** | 工程骨架 | 项目 CRUD、`/rollback`、阶段状态机、健康检查、Celery 队列骨架；无业务 AI 调用 |
 | **M2** | 小说解析 + 分镜编辑 | `/parse` + `gen_storyboard` 任务、分镜 CRUD/Reorder/Confirm；使用 mock VolcanoClient |
 | **M3a** | 真实火山 + 资产持久化 | RealVolcanoClient（含指数退避/错误分级）、角色/场景生成与锁定、主角并发锁定（`SELECT FOR UPDATE`）、人像库入库、OBS 持久化链路 |
-| 后续 | 镜头渲染 / 导出 | M3b+，见 `docs/superpowers/specs/` |
+| **M3b（规划中）** | 镜头渲染 | 单镜头 render draft → 用户确认 → render job → 版本历史 / 选当前 / 锁定最终版 |
+| 后续 | 批量镜头 / 导出 | M3c / M4，见 `docs/superpowers/specs/` |
 
-每个里程碑都有独立的冒烟脚本：`backend/scripts/smoke_m1.sh` / `smoke_m2.sh` / `smoke_m3a.sh`。
+当前已落地的冒烟脚本：`backend/scripts/smoke_m1.sh` / `smoke_m2.sh` / `smoke_m3a.sh`。M3b 的 backend/frontend smoke 已在 plans 中定义，待实现后接入。
 
 ---
 
@@ -223,13 +224,14 @@ npm run format
 
 ## 文档索引
 
-- `CLAUDE.md` —— Claude Code 在本仓库的工作规约（架构约束 / 常用命令 / 测试陷阱）
+- `CLAUDE.md` —— 仓库级工程规约（架构约束 / 常用命令 / 测试陷阱）
+- `AGENTS.md` —— 与 `CLAUDE.md` 保持同步的 agent 入口说明
 - `backend/README.md` —— 后端详细说明（M1/M3a 章节、接口速览、故障排查、提交规约）
-- `frontend/README.md` —— 前端 M1/M2 范围、端点对接矩阵、阶段门生效点
+- `frontend/README.md` —— 前端 M1/M2/M3a 范围、端点对接矩阵、阶段门生效点
 - `frontend/frontend-stack-and-ux.md` —— 前端通用架构方案（与本项目业务解耦）
 - `product/comic-drama-product-design.md` —— 产品侧设计稿
 - `docs/superpowers/specs/` —— 后端/前端 MVP 设计 Spec
-- `docs/superpowers/plans/` —— 各里程碑任务拆解
+- `docs/superpowers/plans/` —— 各里程碑任务拆解（含 M3b backend/frontend plan）
 
 ---
 

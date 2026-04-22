@@ -81,6 +81,61 @@ cd frontend && pnpm dev
 - 分镜拖拽排序(使用 ↑ ↓ 按钮;拖拽进 M3a+)
 - 分镜 `duration_sec` 批量调整(M3c+)
 
+## M3a 范围
+
+M3a 在 M2 的分镜闭环之上,打通了"生成角色 → 锁定主角 → 生成场景 → 绑定镜头 → 锁定场景"的资产链路。
+
+### 新增端点对接
+
+| 端点 | 组件 / Store |
+| --- | --- |
+| `GET /api/v1/projects/{id}/characters` | 调试/备用端点;页面读路径仍走聚合 `GET /projects/{id}` |
+| `POST /api/v1/projects/{id}/characters/generate` | `CharacterAssetsPanel`(空态大按钮)+ `store.generateCharacters` |
+| `PATCH /api/v1/projects/{id}/characters/{cid}` | `CharacterEditorModal` + `store.patchCharacter` |
+| `POST /api/v1/projects/{id}/characters/{cid}/regenerate` | `CharacterAssetsPanel` "重新生成参考图" |
+| `POST /api/v1/projects/{id}/characters/{cid}/lock` | `CharacterAssetsPanel` "设为主角 · 锁定" / "仅锁定" |
+| `POST /api/v1/projects/{id}/scenes/generate` | `SceneAssetsPanel`(空态大按钮) |
+| `PATCH /api/v1/projects/{id}/scenes/{sid}` | `SceneEditorModal` |
+| `POST /api/v1/projects/{id}/scenes/{sid}/regenerate` | `SceneAssetsPanel` "重新生成参考图" |
+| `POST /api/v1/projects/{id}/scenes/{sid}/lock` | `SceneAssetsPanel` "锁定场景" |
+| `POST /api/v1/projects/{id}/storyboards/{shot_id}/bind_scene` | `SceneAssetsPanel` "绑定当前选中镜头" |
+
+### 阶段门
+
+| 操作 | 允许的 `stage_raw` |
+| --- | --- |
+| 生成/编辑/锁定角色 | `storyboard_ready` |
+| 生成/编辑/绑定/锁定场景 | `characters_locked` |
+
+所有被阶段门拦截的写按钮会 toast + 弹 `StageRollbackModal`。
+
+### 新增错误码映射
+
+| code | 文案 |
+| --- | --- |
+| 42201 | AI 内容违规,请修改文案后重试 |
+
+### 本地联调
+
+```bash
+# 1) 后端(mock + EAGER)
+cd backend && AI_PROVIDER_MODE=mock CELERY_TASK_ALWAYS_EAGER=true uvicorn app.main:app --reload
+
+# 2) 前端
+cd frontend && npm run dev
+
+# 3) 冒烟
+./frontend/scripts/smoke_m3a.sh
+```
+
+### M3a 不包含
+
+- 镜头渲染、render 版本历史(M3b/c)
+- 导出(M4)
+- 手动新增角色 / 场景(后端无对应 POST 端点,demo 占位按钮保持 disabled)
+- 分镜拖拽绑定场景(用"当前选中镜头 → 此场景"按钮;拖拽 M3b+)
+- 主角人像库专用进度条(通过 `meta` 里的 "人像库:Active" 文本体现)
+
 ## 目录
 
 `src/api/` 请求封装 · `src/store/` Pinia · `src/composables/` 无状态逻辑 ·

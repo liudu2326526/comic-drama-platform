@@ -9,11 +9,11 @@ Monorepo with two first-class apps plus specs:
 - `backend/` — FastAPI + SQLAlchemy async + Alembic + Celery + Redis + MySQL 8
 - `frontend/` — Vue 3 + Vite + TypeScript + Pinia + Axios (dev server proxies `/api` and `/static` → `127.0.0.1:8000`)
 - `docs/superpowers/specs/` — authoritative design specs (MVP backend/frontend)
-- `docs/superpowers/plans/` — per-milestone implementation plans (M1, M2, M3a)
+- `docs/superpowers/plans/` — per-milestone implementation plans (M1, M2, M3a, M3b planning)
 - `product/` — product-level HTML/CSS demo; source of truth for styling tokens migrated into `frontend/src/styles/`
 - `docs/huawei_api/`, `docs/huoshan_api/`, `docs/integrations/` — upstream vendor API notes (Huawei OBS, Volcengine Ark, etc.)
 
-The project is delivered in milestones: **M1** backbone & project CRUD, **M2** novel parse + storyboard edit (mock Volcano), **M3a** real Volcengine Ark + asset library + Huawei OBS. When reading code, always check which milestone-era a file belongs to via `backend/README.md` and the plan files.
+The project is delivered in milestones: **M1** backbone & project CRUD, **M2** novel parse + storyboard edit (mock Volcano), **M3a** real Volcengine Ark + asset library + Huawei OBS, **M3b** shot-render draft/confirm design and execution planning. When reading code, always check which milestone-era a file belongs to via `backend/README.md`, `frontend/README.md`, and the plan files.
 
 ## Backend (`backend/`)
 
@@ -151,3 +151,4 @@ Matches `frontend/frontend-stack-and-ux.md`. Key conventions:
 - When designing, prefer the MVP + mature-stack path in `docs/superpowers/specs/*`; stop asking for granular sign-offs on design sub-sections (project preference).
 - Commits follow a milestone-task prefix pattern: `feat(backend): <summary>  (Task N)` — see `backend/README.md` bottom for the reference log. Keep one commit per plan task.
 - Before claiming backend changes work, run the relevant `smoke_m*.sh`; they are end-to-end against a live stack. Tests alone do not cover the Celery + Volcano paths.
+- **All LLM / remote-AI calls must run as async jobs — never block inside an HTTP request.** Applies to Volcengine Ark text/image generation, the asset library's `wait_asset_active`, and any external dependency with known P95 > 2s or that may be cut off by reverse-proxy / gateway timeouts. Required shape: the HTTP route creates a `Job` row, dispatches a Celery task, and returns `{job_id, sub_job_ids?}` (reuse the `GenerateJobAck` shape); the task may only write `jobs.status/progress/done/total` through `update_job_progress`; the frontend wires it up with `useJobPolling` + an inline progress banner, and `loadCurrent` re-attaches to in-flight jobs by `kind` so a page refresh doesn't lose progress. Anti-pattern: the original `CharacterService.lock(as_protagonist=True)` called `wait_asset_active(timeout=120)` synchronously in the request thread; even a 150s client timeout was not reliable — see frontend M3a Task 14 for the rework. Choose the async path at design time, not as a review-stage downgrade.
