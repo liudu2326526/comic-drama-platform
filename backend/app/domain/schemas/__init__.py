@@ -23,6 +23,11 @@ from .scene import (
     SceneGenerateRequest,
     SceneLockRequest,
 )
+from .shot_render import (
+    RenderDraftRead,
+    RenderSubmitRequest,
+    RenderVersionRead,
+)
 
 __all__ = [
     "ProjectCreate",
@@ -46,4 +51,7 @@ __all__ = [
     "SceneUpdate",
     "SceneGenerateRequest",
     "SceneLockRequest",
+    "RenderDraftRead",
+    "RenderSubmitRequest",
+    "RenderVersionRead",
 ]
