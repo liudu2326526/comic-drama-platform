@@ -14,7 +14,7 @@ from app.pipeline.states import (
     is_forward_allowed,
     is_rollback_allowed,
 )
-from app.pipeline.storyboard_states import StoryboardStatus
+from app.pipeline.storyboard_states import StoryboardStatus, is_storyboard_transition_allowed
 
 if TYPE_CHECKING:
     from app.domain.models import Job, Project, Character, Scene
@@ -287,3 +287,65 @@ async def count_project_storyboards(session: AsyncSession, project_id: str) -> i
     stmt = select(StoryboardShot.id).where(StoryboardShot.project_id == project_id)
     rows = (await session.execute(stmt)).all()
     return len(rows)
+
+
+def _set_storyboard_status(shot: object, target: StoryboardStatus, reason: str) -> None:
+    current = StoryboardStatus(getattr(shot, "status"))
+    if current == target:
+        return
+    if not is_storyboard_transition_allowed(current, target):
+        raise InvalidTransition(current.value, target.value, reason)
+    shot.status = target.value
+
+
+def mark_shot_generating(shot: object) -> None:
+    _set_storyboard_status(shot, StoryboardStatus.GENERATING, "当前镜头状态不可发起单镜头渲染")
+
+
+def mark_shot_render_running(render: object) -> None:
+    current = getattr(render, "status")
+    if current != "queued":
+        raise InvalidTransition(current, "running", "shot_render 只能 queued → running")
+    render.status = "running"
+    render.error_code = None
+    render.error_msg = None
+
+
+def mark_shot_render_succeeded(shot: object, render: object, *, image_url: str) -> None:
+    current = getattr(render, "status")
+    if current != "running":
+        raise InvalidTransition(current, "succeeded", "shot_render 只能 running → succeeded")
+    render.status = "succeeded"
+    render.image_url = image_url
+    render.finished_at = datetime.utcnow()
+    _set_storyboard_status(shot, StoryboardStatus.SUCCEEDED, "当前镜头状态不可标记渲染成功")
+    shot.current_render_id = render.id
+
+
+def mark_shot_render_failed(
+    shot: object,
+    render: object,
+    *,
+    error_code: str,
+    error_msg: str,
+) -> None:
+    current = getattr(render, "status")
+    if current not in {"queued", "running"}:
+        raise InvalidTransition(current, "failed", "shot_render 只能 queued/running → failed")
+    render.status = "failed"
+    render.error_code = error_code
+    render.error_msg = error_msg
+    render.finished_at = datetime.utcnow()
+    _set_storyboard_status(shot, StoryboardStatus.FAILED, "当前镜头状态不可标记渲染失败")
+
+
+def mark_shot_locked(shot: object) -> None:
+    _set_storyboard_status(shot, StoryboardStatus.LOCKED, "只有 succeeded 镜头可锁定最终版")
+
+
+def select_shot_render_version(shot: object, render: object) -> None:
+    current = getattr(render, "status")
+    if current != "succeeded":
+        raise InvalidTransition(current, "select_render", "只能选择 succeeded 的渲染版本")
+    shot.current_render_id = render.id
+    _set_storyboard_status(shot, StoryboardStatus.SUCCEEDED, "当前镜头状态不可切换到成功版本")

@@ -55,3 +55,7 @@ def test_transitions_table_has_no_placeholder():
     for src, targets in STORYBOARD_ALLOWED_TRANSITIONS.items():
         assert isinstance(src, StoryboardStatus)
         assert all(isinstance(t, StoryboardStatus) for t in targets)
+
+
+def test_storyboard_failed_can_transition_to_succeeded_for_version_selection():
+    assert is_storyboard_transition_allowed(StoryboardStatus.FAILED, StoryboardStatus.SUCCEEDED) is True

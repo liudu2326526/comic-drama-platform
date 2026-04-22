@@ -9,7 +9,13 @@ from .transitions import (
     advance_stage,
     assert_storyboard_editable,
     count_project_storyboards,
+    mark_shot_generating,
+    mark_shot_locked,
+    mark_shot_render_failed,
+    mark_shot_render_running,
+    mark_shot_render_succeeded,
     rollback_stage,
+    select_shot_render_version,
     update_job_progress,
 )
 
@@ -24,6 +30,12 @@ __all__ = [
     "advance_stage",
     "assert_storyboard_editable",
     "count_project_storyboards",
+    "mark_shot_generating",
+    "mark_shot_locked",
+    "mark_shot_render_failed",
+    "mark_shot_render_running",
+    "mark_shot_render_succeeded",
     "rollback_stage",
+    "select_shot_render_version",
     "update_job_progress",
 ]
