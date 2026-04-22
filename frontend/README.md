@@ -136,6 +136,30 @@ cd frontend && npm run dev
 - 分镜拖拽绑定场景(用"当前选中镜头 → 此场景"按钮;拖拽 M3b+)
 - 主角人像库专用进度条(通过 `meta` 里的 "人像库:Active" 文本体现)
 
+## M3b 单镜头渲染
+
+M3b 前端新增：
+
+- `src/api/shots.ts`
+- `GenerationPanel` 先拿草稿、允许编辑 prompt / references、确认后生成
+- `RenderVersionHistory` 历史版本切换
+- 单镜头 `render_shot` job 轮询与刷新恢复
+- 场景详情暂时保留手动“绑定镜头 → 此场景”入口，作为进入 `scenes_locked` 的过渡能力
+
+联调前置：
+
+1. 后端已合入 `docs/superpowers/plans/2026-04-22-backend-m3b-render-shot.md`
+2. 项目已至少推进到 `scenes_locked`
+3. 本地后端运行在 `127.0.0.1:8000`
+
+冒烟：
+
+```bash
+cd frontend
+chmod +x scripts/smoke_m3b.sh
+PID=<已有 scenes_locked 项目 id> ./scripts/smoke_m3b.sh
+```
+
 ## 目录
 
 `src/api/` 请求封装 · `src/store/` Pinia · `src/composables/` 无状态逻辑 ·

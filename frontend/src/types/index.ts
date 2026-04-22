@@ -39,9 +39,34 @@ export interface SceneAsset {
 
 export interface RenderQueueItem {
   id: string;
+  kind: string;
+  status: RenderStatus;
+  progress: number;
+  target_id?: string | null;
+  shot_id?: string | null;
+  render_id?: string | null;
+  image_url?: string | null;
+  version_no?: number | null;
+  shot_status?: string | null;
+  error_code?: string | null;
+  error_msg?: string | null;
+  title?: string;
+  summary?: string;
+}
+
+export interface RenderShotItem {
+  shotId: string;
   title: string;
   summary: string;
+  shotStatus: string;
   status: RenderStatus;
+  progress: number;
+  currentRenderId: string | null;
+  imageUrl: string | null;
+  versionNo: number | null;
+  activeJobId: string | null;
+  errorCode: string | null;
+  errorMsg: string | null;
 }
 
 export interface ExportTask {

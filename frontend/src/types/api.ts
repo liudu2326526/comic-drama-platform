@@ -105,8 +105,65 @@ export interface JobState {
   payload: unknown | null;
   result: unknown | null;
   error_msg: string | null;
+  target_type?: string | null;
+  target_id?: string | null;
   created_at: string;
   finished_at: string | null;
+}
+
+export interface RenderDraftReference {
+  id: string;
+  kind: string;
+  source_id: string;
+  name: string;
+  image_url: string;
+  reason: string;
+}
+
+export interface RenderDraftRead {
+  shot_id: string;
+  prompt: string;
+  references: RenderDraftReference[];
+}
+
+export interface RenderSubmitReference {
+  id: string;
+  kind: string;
+  source_id: string;
+  name: string;
+  image_url: string;
+}
+
+export interface RenderSubmitRequest {
+  prompt: string;
+  references: RenderSubmitReference[];
+}
+
+export interface RenderVersionRead {
+  id: string;
+  shot_id: string;
+  version_no: number;
+  status: string;
+  prompt_snapshot: Record<string, unknown> | null;
+  image_url: string | null;
+  provider_task_id: string | null;
+  error_code: string | null;
+  error_msg: string | null;
+  created_at: string;
+  finished_at: string | null;
+  is_current: boolean;
+}
+
+export interface RenderVersionSelectResponse {
+  shot_id: string;
+  current_render_id: string | null;
+  status: string;
+}
+
+export interface ShotLockResponse {
+  shot_id: string;
+  current_render_id: string | null;
+  status: string;
 }
 
 // ---- M2: storyboards / parse ----

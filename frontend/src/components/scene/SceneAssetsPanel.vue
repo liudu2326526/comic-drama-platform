@@ -381,6 +381,10 @@ const selectedRegenProgress = computed(() =>
               <p v-else class="faint">暂无 meta</p>
             </article>
 
+            <p class="transition-hint">
+              进入渲染阶段前仍需先完成镜头绑定；这里保留为过渡入口，后续再由更稳定的镜头渲染工作流替代。
+            </p>
+
             <div class="asset-actions">
               <button
                 class="ghost-btn"
@@ -448,6 +452,7 @@ const selectedRegenProgress = computed(() =>
 .ref-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .asset-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .faint { color: var(--text-faint); font-size: 12px; }
+.transition-hint { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-faint); }
 
 .asset-browser { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; }
 .asset-list-panel { padding: 18px; background: rgba(255,255,255,0.03); border: 1px solid var(--panel-border); border-radius: var(--radius-md); }
