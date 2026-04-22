@@ -12,6 +12,7 @@ export const ERROR_CODE = {
   NOT_FOUND: 40401,
   CONFLICT: 40901,
   RATE_LIMIT: 42901,
+  CONTENT_FILTER: 42201, // ← 新增(M3a)
   INTERNAL: 50001,
   UPSTREAM: 50301
 } as const;
@@ -101,6 +102,7 @@ export interface JobState {
   progress: number;
   total: number | null;
   done: number;
+  payload: unknown | null;
   result: unknown | null;
   error_msg: string | null;
   created_at: string;
@@ -159,4 +161,100 @@ export interface StoryboardDeleteResponse {
 
 export interface ProjectParseResponse {
   job_id: string;
+}
+
+// ---- M3a: characters / scenes / bind_scene ----
+export type CharacterRoleType = "protagonist" | "supporting" | "atmosphere";
+
+export interface CharacterOut {
+  id: string;
+  name: string;
+  role: string; // 中文展示值 "主角"/"配角"/"氛围",与后端 role_map 一致
+  role_type: CharacterRoleType; // 原始 ENUM,编辑弹窗下拉用
+  is_protagonist: boolean;
+  locked: boolean;
+  summary: string | null;
+  description: string | null;
+  meta: string[]; // 后端已格式化;含 "人像库:Active" 等 tag
+  reference_image_url: string | null; // aggregate 层拼好的 OBS 公网 URL
+}
+
+export interface CharacterUpdate {
+  name?: string; // min 1, max 64;显式 null 会被后端 422
+  summary?: string | null;
+  description?: string | null;
+  meta?: Record<string, unknown> | null;
+  role_type?: CharacterRoleType; // 不允许显式 null
+}
+
+export interface CharacterGenerateRequest {
+  extra_hints?: string[]; // 允许为空;后端 M3a 暂不消费,保留给后续 prompt 增强
+}
+
+export interface CharacterLockRequest {
+  as_protagonist?: boolean; // true → 触发后端 lock_protagonist(异步); false 仅置 locked=true(同步)
+}
+
+export interface CharacterLockResponseSync {
+  ack: "sync";
+  id: string;
+  locked: boolean;
+  is_protagonist: boolean;
+}
+
+export interface CharacterLockResponseAsync extends GenerateJobAck {
+  ack: "async";
+}
+
+export type CharacterLockResponse = CharacterLockResponseSync | CharacterLockResponseAsync;
+
+export interface GenerateJobAck {
+  job_id: string; // 主 job;前端只轮询它
+  sub_job_ids: string[]; // 子 job 列表,本期只用于调试打印
+}
+
+export type SceneThemeRaw = "palace" | "academy" | "harbor" | string | null;
+
+export interface SceneOut {
+  id: string;
+  name: string;
+  theme: SceneThemeRaw;
+  locked: boolean;
+  summary: string | null;
+  description: string | null;
+  meta: string[];
+  usage: string; // "场景复用 N 镜头"
+  template_id: string | null;
+  reference_image_url: string | null;
+}
+
+export interface SceneUpdate {
+  name?: string;
+  theme?: string;
+  summary?: string | null;
+  description?: string | null;
+  meta?: Record<string, unknown> | null;
+  template_id?: string | null;
+}
+
+export interface SceneGenerateRequest {
+  template_whitelist?: string[]; // 空 = 不限;后端 M3a 暂不消费,保留给后续模板筛选
+}
+
+export interface SceneLockRequest {
+  // 占位,后端目前无字段,但保留接口形状以便后续扩展
+}
+
+export interface SceneLockResponse extends GenerateJobAck {
+  ack: "async";
+}
+
+export interface BindSceneRequest {
+  scene_id: string;
+}
+
+export interface BindSceneResponse {
+  shot_id: string;
+  scene_id: string;
+  scene_name: string;
 }

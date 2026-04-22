@@ -68,7 +68,7 @@ class MockVolcanoClient(VolcanoClient):
         logger.info(f"Mock Volcano Chat: model={model}, user_msg={user_msg[:50]}")
 
         # 1. 小说解析任务 (parse_novel)
-        if "拆成" not in user_msg and "分镜" not in user_msg:
+        if "解析" in user_msg and "JSON" in user_msg:
             content = {
                 "summary": "这是一个关于勇气的虚构故事。",
                 "parsed_stats": ["角色: 3", "场景: 2", "预计时长: 60s"],
@@ -79,8 +79,52 @@ class MockVolcanoClient(VolcanoClient):
             print(f"\n[AI Chat Output] Model: {model}\nContent: {resp_str}\n")
             return _ChatResponse(resp_str)
 
+        # 1.5 角色提取任务 (gen_character_asset)
+        if "角色" in user_msg and "提取" in user_msg:
+            content = {
+                "characters": [
+                    {
+                        "name": "秦昭",
+                        "role_type": "protagonist",
+                        "summary": "少年天子",
+                        "description": "心怀大志的少年皇帝。"
+                    },
+                    {
+                        "name": "江离",
+                        "role_type": "supporting",
+                        "summary": "摄政王",
+                        "description": "权倾朝野的摄政王。"
+                    }
+                ]
+            }
+            resp_str = json.dumps(content)
+            print(f"\n[AI Chat Output] Model: {model}\nContent: {resp_str}\n")
+            return _ChatResponse(resp_str)
+
+        # 1.6 场景提取任务 (gen_scene_asset)
+        if "场景" in user_msg and "提取" in user_msg:
+            content = {
+                "scenes": [
+                    {
+                        "name": "长安殿",
+                        "theme": "palace",
+                        "summary": "金碧辉煌的大殿",
+                        "description": "权力交锋的中心。"
+                    },
+                    {
+                        "name": "御花园",
+                        "theme": "palace",
+                        "summary": "幽静的花园",
+                        "description": "偶遇与密谈之所。"
+                    }
+                ]
+            }
+            resp_str = json.dumps(content)
+            print(f"\n[AI Chat Output] Model: {model}\nContent: {resp_str}\n")
+            return _ChatResponse(resp_str)
+
         # 2. 分镜生成任务 (gen_storyboard)
-        else:
+        elif "分镜" in user_msg:
             storyboards = []
             for i in range(1, 11):  # 固定返回 10 条
                 storyboards.append(
@@ -127,7 +171,9 @@ class RealVolcanoClient(VolcanoClient):
         last_exc: Exception | None = None
         for attempt in range(self._settings.ai_retry_max):
             try:
+                logger.info(f"Real Volcano Request: {method} {path} (attempt {attempt+1})")
                 resp = await self._client.request(method, path, json=json_body)
+                logger.info(f"Real Volcano Response: {resp.status_code}")
                 classify_http(resp)
                 return resp.json()
             except httpx.HTTPError as e:

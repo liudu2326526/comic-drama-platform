@@ -24,5 +24,6 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
         "error_msg": job.error_msg,
         "created_at": job.created_at,
         "finished_at": job.finished_at,
+        "payload": job.payload,
         "result": job.result
     })

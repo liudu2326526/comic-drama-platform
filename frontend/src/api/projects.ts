@@ -7,7 +7,8 @@ import type {
   ProjectParseResponse,
   ProjectRollbackRequest,
   ProjectRollbackResponse,
-  ProjectUpdateRequest
+  ProjectUpdateRequest,
+  JobState
 } from "@/types/api";
 import type { ProjectData } from "@/types";
 
@@ -31,10 +32,13 @@ export const projectsApi = {
     return client.post(`/projects/${id}/rollback`, payload).then((r) => r.data as ProjectRollbackResponse);
   },
   parse(id: string): Promise<ProjectParseResponse> {
-    // EAGER 模式后端会同步等 parse_novel + gen_storyboard 跑完,mock 足够快
+    // EAGER 模式后端会同步等 parse_novel + gen_storyboard跑完,mock 足够快
     // 但接真实 LLM(M3a+)可能破 15s 默认超时。这里单独放宽到 60s。
     return client
       .post(`/projects/${id}/parse`, undefined, { timeout: 60_000 })
       .then((r) => r.data as ProjectParseResponse);
+  },
+  getJobs(id: string): Promise<JobState[]> {
+    return client.get(`/projects/${id}/jobs`).then((r) => r.data as JobState[]);
   }
 };

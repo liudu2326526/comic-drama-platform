@@ -10,7 +10,7 @@ import { useToast } from "@/composables/useToast";
 import { ApiError, messageFor } from "@/utils/error";
 
 const store = useWorkbenchStore();
-const { current, activeParseJobId, parseError } = storeToRefs(store);
+const { current, activeParseJobId, activeGenStoryboardJobId, parseError } = storeToRefs(store);
 const toast = useToast();
 
 const startingParse = ref(false);
@@ -19,19 +19,18 @@ const canStartParse = computed(
   () =>
     current.value?.stage_raw === "draft" &&
     current.value.storyboards.length === 0 &&
-    !activeParseJobId.value
+    !activeParseJobId.value &&
+    !activeGenStoryboardJobId.value
 );
 
-// activeParseJobId 已是 storeToRefs 返回的 Ref<string | null>,直接传给 useJobPolling
-const { job } = useJobPolling(activeParseJobId, {
-  onProgress: () => {
-    // 进度推进,UI 自动响应 job.value
-  },
+// 1. 轮询 parse_novel
+const { job: parseJob } = useJobPolling(activeParseJobId, {
   onSuccess: async () => {
     try {
       await store.reload();
       store.markParseSucceeded();
-      toast.success("分镜已生成");
+      // 触发 gen_storyboard 的追踪
+      await store.findAndTrackGenStoryboardJob();
     } catch (e) {
       store.markParseFailed((e as Error).message);
     }
@@ -40,6 +39,24 @@ const { job } = useJobPolling(activeParseJobId, {
     const msg =
       j?.error_msg ?? (err instanceof ApiError ? messageFor(err.code, err.message) : "解析失败");
     store.markParseFailed(msg);
+    toast.error(msg);
+  }
+});
+
+// 2. 轮询 gen_storyboard
+const { job: genJob } = useJobPolling(activeGenStoryboardJobId, {
+  onSuccess: async () => {
+    try {
+      await store.reload();
+      store.markGenStoryboardSucceeded();
+      toast.success("分镜已生成");
+    } catch (e) {
+      store.markGenStoryboardFailed((e as Error).message);
+    }
+  },
+  onError: (j, err) => {
+    const msg = j?.error_msg ?? "生成分镜失败";
+    store.markGenStoryboardFailed(msg);
     toast.error(msg);
   }
 });
@@ -58,11 +75,15 @@ async function triggerParse() {
   }
 }
 
+const activeJobId = computed(() => activeParseJobId.value || activeGenStoryboardJobId.value);
+const activeJob = computed(() => (activeParseJobId.value ? parseJob.value : genJob.value));
+
 const progressLabel = computed(() => {
-  const j = job.value;
+  const j = activeJob.value;
   if (!j) return "正在排队…";
-  if (j.total && j.total > 0) return `正在解析小说… ${j.done}/${j.total}`;
-  return `正在解析小说… ${j.progress}%`;
+  const prefix = j.kind === "gen_storyboard" ? "正在生成分镜" : "正在解析小说";
+  if (j.total && j.total > 0) return `${prefix}… ${j.done}/${j.total}`;
+  return `${prefix}… ${j.progress}%`;
 });
 </script>
 
@@ -75,12 +96,12 @@ const progressLabel = computed(() => {
     </template>
 
     <!-- 解析进行中 -->
-    <div v-if="activeParseJobId" class="parse-banner running">
+    <div v-if="activeJobId" class="parse-banner running">
       <div class="parse-banner-head">
         <strong>{{ progressLabel }}</strong>
-        <span v-if="job?.kind">job: {{ job.kind }}</span>
+        <span v-if="activeJob?.kind">job: {{ activeJob.kind }}</span>
       </div>
-      <ProgressBar :value="job?.progress ?? 0" />
+      <ProgressBar :value="activeJob?.progress ?? 0" />
     </div>
 
     <!-- 解析失败 -->

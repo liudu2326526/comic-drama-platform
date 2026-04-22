@@ -28,17 +28,32 @@ async def _parse_novel_task(project_id: str, job_id: str):
 
             # 3. 调用 AI 解析
             client = get_volcano_client()
+            prompt = f"""请解析以下小说内容并返回 JSON 格式的分析结果。
+要求严格遵守以下 JSON 结构：
+{{
+  "summary": "一句话故事梗概",
+  "overview": "详细的故事背景与情节概述",
+  "parsed_stats": ["角色: N", "场景: M", "预计时长: Ts"],
+  "suggested_shots": 12
+}}
+
+小说内容：
+{project.story}"""
+
             messages = [
-                {"role": "system", "content": "你是一个小说解析专家。"},
-                {"role": "user", "content": f"请解析以下小说内容并返回 JSON:\n\n{project.story}"}
+                {"role": "system", "content": "你是一个小说解析专家，只返回纯 JSON 内容，不包含任何解释。"},
+                {"role": "user", "content": prompt}
             ]
             
-            # Mock 模式下这里会很快返回
             from app.config import get_settings
+            from app.utils.json_utils import extract_json
             settings = get_settings()
-            resp = await client.chat_completions(model=settings.ark_chat_model, messages=messages)
+            resp = await client.chat_completions(
+                model=settings.ark_chat_model, 
+                messages=messages
+            )
             content_str = resp.choices[0].message.content
-            data = json.loads(content_str)
+            data = extract_json(content_str)
 
             # 4. 更新项目
             project.summary = data.get("summary")
@@ -75,10 +90,4 @@ async def _parse_novel_task(project_id: str, job_id: str):
 
 @celery_app.task(name="ai.parse_novel")
 def parse_novel(project_id: str, job_id: str):
-    try:
-        loop = asyncio.get_running_loop()
-        # 如果已有运行中的 loop, 只能用 create_task 异步运行
-        loop.create_task(_parse_novel_task(project_id, job_id))
-    except RuntimeError:
-        # 没有运行中的 loop, 可以直接 run
-        asyncio.run(_parse_novel_task(project_id, job_id))
+    asyncio.run(_parse_novel_task(project_id, job_id))

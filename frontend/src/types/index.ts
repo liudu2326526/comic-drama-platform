@@ -1,29 +1,40 @@
 /* frontend/src/types/index.ts */
-import type { ProjectStageRaw, ProjectStageZh, StoryboardDetail } from "./api";
+import type {
+  CharacterRoleType,
+  ProjectStageRaw,
+  ProjectStageZh,
+  SceneThemeRaw,
+  StoryboardDetail
+} from "./api";
 
 export type RenderStatus = "success" | "processing" | "warning" | "failed";
-export type SceneTheme = "theme-palace" | "theme-academy" | "theme-harbor";
 
-/** 分镜卡片展示对象, 对齐后端聚合接口与 StoryboardDetail */
+/** 分镜卡片展示对象,对齐后端聚合接口与 StoryboardDetail(idx/duration_sec/scene_id 等字段)。 */
 export interface StoryboardShot extends StoryboardDetail {}
 
 export interface CharacterAsset {
   id: string;
   name: string;
-  role: string;
-  summary: string;
-  description: string;
+  role: string; // 中文,aggregate 层已拼
+  role_type?: CharacterRoleType; // aggregate M3a 会给;编辑时用
+  is_protagonist: boolean; // M3a 新增
+  locked: boolean; // M3a 新增
+  summary: string | null;
+  description: string | null;
   meta: string[];
+  reference_image_url?: string | null; // M3a 新增
 }
 
 export interface SceneAsset {
   id: string;
   name: string;
-  summary: string;
+  summary: string | null;
   usage: string;
-  description: string;
+  description: string | null;
   meta: string[];
-  theme: SceneTheme;
+  theme: SceneThemeRaw; // 后端裸字符串 palace/academy/harbor 或 null;CSS class 在组件内映射
+  locked: boolean; // M3a 新增
+  reference_image_url?: string | null; // M3a 新增
 }
 
 export interface RenderQueueItem {

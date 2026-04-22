@@ -36,4 +36,40 @@ describe("gateFlags", () => {
     expect(g.canRollback).toBe(false);
     expect(g.canEditStoryboards).toBe(false);
   });
+
+  describe("M3a gates", () => {
+    it("storyboard_ready: can edit/lock/generate characters, not scenes", () => {
+      const f = gateFlags("storyboard_ready");
+      expect(f.canEditCharacters).toBe(true);
+      expect(f.canLockCharacter).toBe(true);
+      expect(f.canGenerateCharacters).toBe(true);
+      expect(f.canEditScenes).toBe(false);
+      expect(f.canBindScene).toBe(false);
+      expect(f.canLockScene).toBe(false);
+      expect(f.canGenerateScenes).toBe(false);
+    });
+
+    it("characters_locked: can edit/lock/generate/bind scenes, not characters", () => {
+      const f = gateFlags("characters_locked");
+      expect(f.canEditCharacters).toBe(false);
+      expect(f.canLockCharacter).toBe(false);
+      expect(f.canGenerateCharacters).toBe(false);
+      expect(f.canEditScenes).toBe(true);
+      expect(f.canBindScene).toBe(true);
+      expect(f.canLockScene).toBe(true);
+      expect(f.canGenerateScenes).toBe(true);
+    });
+
+    it("scenes_locked and later: neither character nor scene edits allowed", () => {
+      const raws = ["scenes_locked", "rendering", "ready_for_export", "exported"] as const;
+      for (const r of raws) {
+        const f = gateFlags(r);
+        expect(f.canEditCharacters).toBe(false);
+        expect(f.canEditScenes).toBe(false);
+        expect(f.canLockCharacter).toBe(false);
+        expect(f.canLockScene).toBe(false);
+        expect(f.canBindScene).toBe(false);
+      }
+    });
+  });
 });

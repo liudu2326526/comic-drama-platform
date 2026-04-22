@@ -29,16 +29,39 @@ async def _gen_storyboard_task(project_id: str, job_id: str):
 
             # 3. 调用 AI 生成分镜
             client = get_volcano_client()
+            prompt = f"""请为以下小说生成 8-12 个分镜，返回 JSON 列表。
+每个分镜对象必须包含：
+- idx: 序号(1, 2, ...)
+- title: 镜头标题
+- description: 镜头画面描述
+- detail: 视觉细节提示词
+- duration_sec: 建议时长(秒，数字)
+
+小说内容：
+{project.story}"""
+
             messages = [
-                {"role": "system", "content": "你是一个分镜设计专家。"},
-                {"role": "user", "content": f"请为以下小说生成 8-12 个分镜,返回 JSON 列表:\n\n{project.story}"}
+                {"role": "system", "content": "你是一个分镜设计专家，只返回纯 JSON 数组内容，不包含任何解释。"},
+                {"role": "user", "content": prompt}
             ]
             
             from app.config import get_settings
+            from app.utils.json_utils import extract_json
             settings = get_settings()
-            resp = await client.chat_completions(model=settings.ark_chat_model, messages=messages)
+            resp = await client.chat_completions(
+                model=settings.ark_chat_model, 
+                messages=messages
+            )
             content_str = resp.choices[0].message.content
-            storyboards_data = json.loads(content_str)
+            # 注意: 如果使用了 json_object 模式，返回的可能是 {"storyboards": [...]}
+            data = extract_json(content_str)
+            if isinstance(data, dict) and "storyboards" in data:
+                storyboards_data = data["storyboards"]
+            elif isinstance(data, list):
+                storyboards_data = data
+            else:
+                # 尝试再次解析，或者如果 data 是 dict 但没有 storyboards 键
+                storyboards_data = data if isinstance(data, list) else []
 
             # 4. 批量插入分镜
             # 先清理已有的分镜(如果是重跑的话,但 M2 暂不考虑复杂重跑逻辑)
@@ -56,11 +79,14 @@ async def _gen_storyboard_task(project_id: str, job_id: str):
                 )
                 session.add(shot)
             
-            # 5. 更新 Job 为成功
+            # 5. 推进阶段
+            await advance_stage(session, project, ProjectStageRaw.STORYBOARD_READY)
+            
+            # 6. 更新 Job 为成功
             await update_job_progress(session, job_id, status="succeeded", progress=100)
             await session.commit()
             
-            logger.info(f"Project {project_id} storyboards generated successfully")
+            logger.info(f"Project {project_id} storyboards generated successfully, advanced to storyboard_ready")
             
         except Exception as e:
             logger.exception(f"Error in gen_storyboard_task: {e}")
@@ -69,8 +95,4 @@ async def _gen_storyboard_task(project_id: str, job_id: str):
 
 @celery_app.task(name="ai.gen_storyboard")
 def gen_storyboard(project_id: str, job_id: str):
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_gen_storyboard_task(project_id, job_id))
-    except RuntimeError:
-        asyncio.run(_gen_storyboard_task(project_id, job_id))
+    asyncio.run(_gen_storyboard_task(project_id, job_id))

@@ -7,7 +7,10 @@ from app.infra.ulid import new_id
 
 class Scene(Base, TimestampMixin):
     __tablename__ = "scenes"
-    __table_args__ = (Index("ix_scenes_project_id", "project_id"),)
+    __table_args__ = (
+        Index("ix_scenes_project_id", "project_id"),
+        Index("ix_scenes_project_locked", "project_id", "locked"),
+    )
 
     id: Mapped[str] = mapped_column(CHAR(26), primary_key=True, default=new_id)
     project_id: Mapped[str] = mapped_column(

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.api.envelope import Envelope
-from app.api.errors import CONTENT_FILTER
+from app.api.errors import CONTENT_FILTER, ApiError
 from app.deps import get_db
 from app.domain.models import Project, Character, Job
 from app.domain.schemas.character import (
@@ -19,7 +19,7 @@ from app.domain.services.character_service import CharacterService
 from app.infra import get_volcano_client
 from app.infra.volcano_errors import VolcanoContentFilterError
 from app.pipeline.states import ProjectStageRaw
-from app.pipeline.transitions import assert_asset_editable, update_job_progress
+from app.pipeline.transitions import assert_asset_editable, update_job_progress, InvalidTransition
 from app.tasks.ai.gen_character_asset import gen_character_asset
 from app.config import get_settings
 
@@ -32,13 +32,14 @@ async def list_characters(
     db: AsyncSession = Depends(get_db)
 ):
     chars = await CharacterService.list_by_project(db, project_id)
-    # TODO: 拼装 meta tags 和 reference_image_url (目前先返回原始数据)
-    # 真正的拼装建议放在 aggregate_service 或 CharacterOut 的 from_orm 中
+    # 角色 role 中文映射
+    role_cn = {"protagonist": "主角", "supporting": "配角", "atmosphere": "氛围"}
+    
     return Envelope.success([
         CharacterOut(
             id=c.id,
             name=c.name,
-            role=role_map.get(c.role_type, c.role_type),
+            role=role_cn.get(c.role_type, c.role_type),
             role_type=c.role_type,
             is_protagonist=c.is_protagonist,
             locked=c.locked,
@@ -60,10 +61,12 @@ async def generate_characters(
     stmt = select(Project).where(Project.id == project_id).with_for_update()
     project = (await db.execute(stmt)).scalar_one_or_none()
     if not project:
-        raise HTTPException(status_code=404, detail="项目不存在")
+        raise ApiError(40401, "项目不存在", http_status=404)
     
-    if ProjectStageRaw(project.stage) != ProjectStageRaw.STORYBOARD_READY:
-        raise HTTPException(status_code=400, detail="项目阶段不支持生成角色")
+    try:
+        assert_asset_editable(project, "character")
+    except InvalidTransition as e:
+        raise ApiError(40301, str(e), http_status=403)
 
     # 2. 调用 AI 提取角色
     # 构造 prompt
@@ -73,11 +76,18 @@ async def generate_characters(
     try:
         chat_result = await volcano_client.chat_completions(
             model=settings.ark_chat_model,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"}
+            messages=[{"role": "user", "content": prompt}]
         )
         content = chat_result.choices[0].message.content
-        char_data_list = json.loads(content).get("characters", [])
+        from app.utils.json_utils import extract_json
+        data = extract_json(content)
+        if isinstance(data, dict):
+            char_data_list = data.get("characters", [])
+        elif isinstance(data, list):
+            char_data_list = data
+        else:
+            char_data_list = []
+            
         if not char_data_list:
             raise HTTPException(status_code=422, detail={"code": 40001, "message": "未识别到角色"})
     except VolcanoContentFilterError:
@@ -99,6 +109,7 @@ async def generate_characters(
 
     # 4. 幂等创建 Character 并分发任务
     sub_job_ids = []
+    tasks_to_delay = []
     for data in char_data_list:
         # find or create
         stmt = select(Character).where(Character.project_id == project_id, Character.name == data["name"])
@@ -124,11 +135,14 @@ async def generate_characters(
         db.add(child_job)
         await db.flush()
         sub_job_ids.append(child_job.id)
-
-        # 异步分发
-        gen_character_asset.delay(char.id, child_job.id)
+        tasks_to_delay.append((char.id, child_job.id))
 
     await db.commit()
+    
+    # 5. 只有在事务提交后才分发任务
+    for cid, jid in tasks_to_delay:
+        gen_character_asset.delay(cid, jid)
+
     return Envelope.success(GenerateJobAck(job_id=main_job.id, sub_job_ids=sub_job_ids))
 
 @router.patch("/{cid}", response_model=Envelope[CharacterOut])
@@ -141,12 +155,18 @@ async def update_character(
     project = await db.get(Project, project_id)
     char = await CharacterService.get_by_id(db, cid)
     if not project or not char or char.project_id != project_id:
-        raise HTTPException(status_code=404, detail="资源不存在")
+        raise ApiError(40401, "资源不存在", http_status=404)
     
-    await CharacterService.update(db, project, char, req)
-    await db.commit()
+    try:
+        await CharacterService.update(db, project, char, req)
+        await db.commit()
+    except InvalidTransition as e:
+        raise ApiError(40301, str(e), http_status=403)
+    
+    role_cn = {"protagonist": "主角", "supporting": "配角", "atmosphere": "氛围"}
     return Envelope.success(CharacterOut(
-        id=char.id, name=char.name, role=char.role_type, role_type=char.role_type,
+        id=char.id, name=char.name, role=role_cn.get(char.role_type, char.role_type),
+        role_type=char.role_type,
         is_protagonist=char.is_protagonist, locked=char.locked,
         summary=char.summary, description=char.description,
         meta=[], reference_image_url=char.reference_image_url
@@ -162,11 +182,18 @@ async def lock_character(
     project = await db.get(Project, project_id)
     char = await CharacterService.get_by_id(db, cid)
     if not project or not char or char.project_id != project_id:
-        raise HTTPException(status_code=404, detail="资源不存在")
+        raise ApiError(40401, "资源不存在", http_status=404)
     
-    await CharacterService.lock(db, project, char, req.as_protagonist if req else False)
-    await db.commit()
-    return Envelope.success({"id": char.id, "locked": True, "is_protagonist": char.is_protagonist})
+    try:
+        as_proto = bool(req and req.as_protagonist)
+        if as_proto:
+            job_id = await CharacterService.lock_protagonist_async(db, project, char)
+            return Envelope.success({"job_id": job_id, "sub_job_ids": [], "ack": "async"})
+            
+        body = await CharacterService.lock(db, project, char)
+        return Envelope.success({**body, "ack": "sync"})
+    except InvalidTransition as e:
+        raise ApiError(40301, str(e), http_status=403)
 
 @router.post("/{cid}/regenerate", response_model=Envelope[GenerateJobAck])
 async def regenerate_character(

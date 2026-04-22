@@ -53,6 +53,14 @@ class AggregateService:
         # 角色 role 中文映射
         role_map = {"protagonist": "主角", "supporting": "配角", "atmosphere": "氛围"}
 
+        def _meta_to_tags(meta: dict | None, video_style_ref: dict | None) -> list[str]:
+            tags: list[str] = []
+            if isinstance(meta, dict):
+                tags.extend(str(v) for v in meta.get("tags", []) if v)
+            if isinstance(video_style_ref, dict) and video_style_ref.get("asset_status"):
+                tags.append(f"人像库:{video_style_ref['asset_status']}")
+            return tags
+
         return ProjectDetail(
             id=project.id,
             name=project.name,
@@ -75,7 +83,10 @@ class AggregateService:
                 "tags": s.tags,
                 "status": s.status,
                 "duration_sec": float(s.duration_sec) if s.duration_sec is not None else None,
-                "scene_id": s.scene_id
+                "scene_id": s.scene_id,
+                "current_render_id": s.current_render_id,
+                "created_at": s.created_at,
+                "updated_at": s.updated_at,
             } for s in storyboards],
             characters=[{
                 "id": c.id,
@@ -86,7 +97,7 @@ class AggregateService:
                 "locked": c.locked,
                 "summary": c.summary,
                 "description": c.description,
-                "meta": [], # TODO: 摘要化 meta
+                "meta": _meta_to_tags(c.meta, c.video_style_ref),
                 "reference_image_url": build_asset_url(c.reference_image_url)
             } for c in chars],
             scenes=[{
@@ -95,7 +106,7 @@ class AggregateService:
                 "theme": s.theme,
                 "summary": s.summary,
                 "description": s.description,
-                "meta": [], # TODO: 摘要化 meta
+                "meta": _meta_to_tags(s.meta, s.video_style_ref),
                 "locked": s.locked,
                 "template_id": s.template_id,
                 "reference_image_url": build_asset_url(s.reference_image_url),

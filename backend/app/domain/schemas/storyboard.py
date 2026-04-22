@@ -28,3 +28,11 @@ class StoryboardUpdate(BaseModel):
 
 class StoryboardReorderRequest(BaseModel):
     ordered_ids: list[str] = Field(..., min_length=1)
+
+class BindSceneRequest(BaseModel):
+    scene_id: str = Field(..., min_length=1)
+
+class BindSceneResponse(BaseModel):
+    shot_id: str
+    scene_id: str
+    scene_name: str

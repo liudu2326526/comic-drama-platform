@@ -90,6 +90,11 @@ async def client(test_engine):
     settings = get_settings()
     # 强制在测试环境中启用 ALWAYS_EAGER
     settings.celery_task_always_eager = True
+    try:
+        from app.tasks.celery_app import celery_app
+        celery_app.conf.task_always_eager = True
+    except ImportError:
+        pass
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c

@@ -44,3 +44,9 @@ class SceneLockRequest(BaseModel):
 class GenerateJobAck(BaseModel):
     job_id: str
     sub_job_ids: list[str] = []
+
+
+class SceneLockResponse(BaseModel):
+    ack: str = "async"
+    job_id: str
+    sub_job_ids: list[str] = []

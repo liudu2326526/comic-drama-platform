@@ -267,7 +267,7 @@ async def update_job_progress(
     if status is not None:
         # 简单线性校验:queued→running→(succeeded|failed|canceled)
         allowed: dict[str, set[str]] = {
-            "queued": {"running", "canceled"},
+            "queued": {"running", "failed", "canceled"},
             "running": {"succeeded", "failed", "canceled"},
             "succeeded": set(),
             "failed": {"running"},   # 允许重试

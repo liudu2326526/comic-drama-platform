@@ -1,12 +1,8 @@
 from .volcano_client import get_volcano_client
 from .volcano_asset_client import VolcanoAssetClient
 
-_asset_client = None
-
 def get_volcano_asset_client() -> VolcanoAssetClient:
-    global _asset_client
-    if _asset_client is None:
-        _asset_client = VolcanoAssetClient()
-    return _asset_client
+    # 不再使用单例, 避免 async 任务中 loop closed 错误
+    return VolcanoAssetClient()
 
 __all__ = ["get_volcano_client", "get_volcano_asset_client"]

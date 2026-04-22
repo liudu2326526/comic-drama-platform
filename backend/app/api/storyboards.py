@@ -4,7 +4,12 @@ from app.api.envelope import ok
 from app.api.errors import ApiError
 from app.deps import get_db
 from app.domain.services import StoryboardService, SceneService
-from app.domain.schemas.storyboard import StoryboardUpdate, StoryboardReorderRequest, StoryboardCreate
+from app.domain.schemas.storyboard import (
+    StoryboardUpdate, 
+    StoryboardReorderRequest, 
+    StoryboardCreate,
+    BindSceneRequest
+)
 from app.pipeline.transitions import InvalidTransition
 
 router = APIRouter(prefix="/projects/{project_id}/storyboards", tags=["storyboards"])
@@ -13,17 +18,23 @@ router = APIRouter(prefix="/projects/{project_id}/storyboards", tags=["storyboar
 async def bind_scene(
     project_id: str,
     shot_id: str,
-    scene_id: str,
+    payload: BindSceneRequest,
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        shot = await SceneService.bind_scene_to_shot(db, project_id, shot_id, scene_id)
+        shot, scene = await SceneService.bind_scene_to_shot(
+            db, project_id, shot_id, payload.scene_id
+        )
         await db.commit()
-        return ok({"id": shot.id, "scene_id": shot.scene_id})
+        return ok({
+            "shot_id": shot.id,
+            "scene_id": scene.id,
+            "scene_name": scene.name
+        })
     except ValueError as e:
         raise ApiError(40001, str(e))
     except InvalidTransition as e:
-        raise ApiError(40301, str(e))
+        raise ApiError(40301, str(e), http_status=403)
 
 @router.get("")
 async def list_storyboards(project_id: str, db: AsyncSession = Depends(get_db)):

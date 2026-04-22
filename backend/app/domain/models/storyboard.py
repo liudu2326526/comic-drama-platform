@@ -13,6 +13,7 @@ class StoryboardShot(Base, TimestampMixin):
         UniqueConstraint("project_id", "idx", name="uq_storyboards_project_idx"),
         Index("ix_storyboards_project_id", "project_id"),
         Index("ix_storyboards_scene_id", "scene_id"),
+        Index("ix_storyboards_project_scene", "project_id", "scene_id"),
     )
 
     id: Mapped[str] = mapped_column(CHAR(26), primary_key=True, default=new_id)

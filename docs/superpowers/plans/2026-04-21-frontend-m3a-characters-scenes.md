@@ -2980,7 +2980,11 @@ git commit -m "docs(frontend): M3a 范围 / 端点 / 阶段门速览"
 
 ## DoD
 
-- [ ] Task 0 合入后端(aggregate 包含 `is_protagonist`/`locked`/`meta` 人像库状态/storyboard 时间字段);`curl /projects/<id>` 可见
+- [ ] Task 0 合入后端(aggregate 包含 `is_protagonist`/`locked`/`meta` 人像库状态/storyboard 时间字段;`bind_scene` 用 JSON body + 返回 `scene_name`;generate/lock 阶段错误码统一 40301;`role` 中文映射修复)。校验门:
+  - [ ] `cd backend && ./.venv/bin/pytest tests/integration/test_projects_api.py tests/integration/test_bind_scene.py -v` 全绿(覆盖 Step 7 三条契约测试 `test_aggregate_includes_lock_flags` / `test_bind_scene_uses_json_body_and_returns_scene_name` / `test_bind_scene_rejects_wrong_stage_with_40301`)
+  - [ ] `curl /projects/<id> | jq '.data.characters[0]'` 可见 `is_protagonist` / `locked` / `meta:["人像库:Active"]`
+  - [ ] `curl /projects/<id> | jq '.data.storyboards[0]'` 可见 `current_render_id` / `created_at` / `updated_at`
+  - [ ] `curl -X POST /storyboards/<shot_id>/bind_scene -d '{"scene_id":"..."}'` 返回 `{shot_id, scene_id, scene_name}`,错误阶段返回 HTTP 403 + envelope `40301`
 - [ ] `npm run typecheck` 无新增 error
 - [ ] `npm test` 全绿,覆盖新增的 api client + workbench 写动作 + 42201 错误码映射 + useStageGate M3a flag
 - [ ] `npm run build` 成功,`dist/` 产物 gzipped < 500 KB(M2 约 180 KB,M3a 追加代码不应超 50 KB gzip)
@@ -3038,5 +3042,1056 @@ Task 9 + 10
 
 - **Task 0 未合入**:本 plan 所有前端任务应 block;若后端方侧拒绝补 `meta`/storyboard 时间字段/`bind_scene` body 契约/阶段错误码,前端不得靠兼容分支绕过,需先收敛后端契约再继续
 - **主角锁定 150s timeout**:若真实人像库压力导致 > 150s,UI 会报超时;降级策略是让后端把人像库调用异步化(新开 job),前端改为轮询 — 此改动超出 M3a 范围,先观察再决定
+  - **2026-04-22 更新**:已落地为下方 Task 14(异步化 + useJobPolling 接管)。本条风险关闭。
 - **生成大批角色导致火山图像限流**:M3a 前端不做节流,由后端 Celery concurrency 兜底;若用户频繁重试 → 42901 toast 即可
 - **视觉抖动**:`reference_image_url` 懒加载时,选中角色卡片会经历"占位 → 图片" 闪烁;MVP 接受该抖动,M3b 再做 skeleton 过渡
+
+---
+
+# M3a Review 增量(2026-04-22 追加)
+
+> **触发**:Task 0–12 完成后做了一次完整 review。`npm run typecheck` 报 2 个 error、`npm test` 4 个 fail;主角锁定的 150s 客户端 timeout 在真实人像库压力下不可靠。把修复 + 异步化补成两个新 Task,**Task 13 必须先合,Task 14 依赖 Task 13 落地的 `projectsApi.getJobs`**。
+
+## Review 摘要(必读)
+
+| 严重级 | 位置 | 问题 |
+| --- | --- | --- |
+| Critical | `frontend/src/store/workbench.ts:149` | 调用了不存在的 `projectsApi.getJobs`,`vue-tsc` 报 TS2339,`npm run build` 挂 |
+| Critical | `tests/unit/characters.api.spec.ts:21,39` / `tests/unit/scenes.api.spec.ts:22,38` | 4 个 `toHaveBeenCalledWith` 漏写 axios 第三参数 `{timeout}`,与实现不一致 → 4 fail |
+| Important | `CharacterAssetsPanel.vue:222` / `SceneAssetsPanel.vue:228` | `selectedHasRegenJob` 用 `some(startsWith)` 判定,A 重生成中切到 B,B 的按钮也会显示"重生成中…(X%)" |
+| Important | `WorkbenchView.vue:30-48` `loadCurrent` | 非 draft 阶段从不主动接管 in-flight `gen_characters`/`gen_scenes`/`lock_character_asset` job,F5 后进度 UI 与成功 reload 都丢 |
+| Medium | `store/workbench.ts:292-303` | `markRegen{Succeeded,Failed}(kind,id)` 与 `byKey` 版本重叠,死代码 |
+| Medium | `SceneEditorModal.vue:55-56` | "清空 theme" 不可达,产品上无法撤销主题(M3a 接受,加注释即可) |
+| Medium | `store/workbench.ts:228-230` | 用后端 code `40901` 当本地单飞拦截信号,语义"借用"不严谨,但行为正确 |
+
+## Task 13: M3a Review 修复(前置 / 阻塞 Task 14)
+
+**Files:**
+- Modify: `frontend/src/api/projects.ts`(新增 `getJobs`)
+- Modify: `frontend/src/store/workbench.ts`(`findAndTrackGenStoryboardJob` 类型修复)
+- Modify: `frontend/tests/unit/characters.api.spec.ts`(2 处 expect 补 timeout/body)
+- Modify: `frontend/tests/unit/scenes.api.spec.ts`(2 处同上)
+- Modify: `frontend/src/components/character/CharacterAssetsPanel.vue`(`selectedHasRegenJob` / `selectedRegenProgress` 收紧到当前 selected id)
+- Modify: `frontend/src/components/scene/SceneAssetsPanel.vue`(同上)
+- Modify: `frontend/src/store/workbench.ts`(删 `markRegenSucceeded` / `markRegenFailed` 的 `(kind, id)` 重载,只保留 byKey)
+
+- [ ] **Step 1: `projects.ts` 新增 `getJobs`**
+
+```ts
+// frontend/src/api/projects.ts
+import type { JobState } from "@/types/api";
+// ...
+getJobs(id: string): Promise<JobState[]> {
+  return client.get(`/projects/${id}/jobs`).then((r) => r.data as JobState[]);
+}
+```
+
+后端 `GET /api/v1/projects/{id}/jobs` M2 已存在(`smoke_m3a.sh` 也在用),无需改后端。
+
+- [ ] **Step 2: 修 `workbench.findAndTrackGenStoryboardJob` 显式类型**
+
+```ts
+// frontend/src/store/workbench.ts
+import type { JobState } from "@/types/api";
+// ...
+async function findAndTrackGenStoryboardJob() {
+  if (!current.value) return;
+  const jobs = await projectsApi.getJobs(current.value.id);
+  const gsJob = jobs.find(
+    (j: JobState) =>
+      j.kind === "gen_storyboard" && (j.status === "queued" || j.status === "running")
+  );
+  if (gsJob) genStoryboardJob.value = { projectId: current.value.id, jobId: gsJob.id };
+}
+```
+
+- [ ] **Step 3: 4 处 expect 补齐第三参数**
+
+```ts
+// tests/unit/characters.api.spec.ts
+// generate
+expect(spy).toHaveBeenCalledWith(
+  "/projects/pid/characters/generate",
+  { extra_hints: ["美强惨"] },
+  { timeout: 60_000 }
+);
+// regenerate
+expect(spy).toHaveBeenCalledWith(
+  "/projects/pid/characters/c1/regenerate",
+  {},
+  { timeout: 60_000 }
+);
+```
+
+```ts
+// tests/unit/scenes.api.spec.ts
+// generate
+expect(spy).toHaveBeenCalledWith(
+  "/projects/pid/scenes/generate",
+  { template_whitelist: ["palace"] },
+  { timeout: 60_000 }
+);
+// regenerate
+expect(spy).toHaveBeenCalledWith(
+  "/projects/pid/scenes/s1/regenerate",
+  {},
+  { timeout: 60_000 }
+);
+```
+
+- [ ] **Step 4: 收紧 `selectedHasRegenJob` 与 `selectedRegenProgress`(2 个 panel)**
+
+```ts
+// CharacterAssetsPanel.vue
+const selectedRegenJobId = computed(() =>
+  selectedCharacter.value
+    ? store.regenJobIdFor("character", selectedCharacter.value.id)
+    : null
+);
+const selectedHasRegenJob = computed(() => !!selectedRegenJobId.value);
+const selectedRegenProgress = computed(() =>
+  selectedRegenJobId.value ? regenProgressByJobId.value[selectedRegenJobId.value] ?? 0 : 0
+);
+```
+
+`SceneAssetsPanel.vue` 同 pattern,把 `"character:"` 换成 `"scene:"`,`selectedCharacter` 换成 `selectedScene`。
+
+`activeCharacterRegenJobId` / `activeSceneRegenJobId` 给 `useJobPolling` 用的 ref **保持原样**(单飞约束:同一 panel 同一时间只跑一个 regen,所以 polling 只挂一个),只改 UI 显示侧的判定。
+
+- [ ] **Step 5: 删除 `markRegenSucceeded(kind, id)` / `markRegenFailed(kind, id)` 重载**
+
+```ts
+// store/workbench.ts —— 删除 markRegenSucceeded / markRegenFailed 函数定义与 return 暴露
+// 只保留 markRegenByKeySucceeded / markRegenByKeyFailed(panel 内已只用 byKey 版本)
+```
+
+- [ ] **Step 6: 自检**
+
+```bash
+cd frontend
+npm run typecheck       # 期望:0 error
+npm test                # 期望:0 fail
+```
+
+- [ ] **Step 7: Commit**
+
+```
+fix(frontend): M3a review — 补 projectsApi.getJobs / 修 4 处测试期望 / regen 进度按 selected id 收紧
+```
+
+---
+
+## Task 14: 主角锁定异步化 + 进度条 UI
+
+**Goal:** 把 `lock(as_protagonist=true)` 从"同步等 120s 人像库 + 客户端 150s timeout"改成"立即 ack(job_id) + 后端 celery task + 前端 useJobPolling + inline 进度 banner",对齐 generate 的 UX 一致性。**普通锁定(`as_protagonist=false`)继续保持同步**(无外部依赖、< 100ms,无需异步化)。
+
+**Architecture:**
+- 后端 lock 路由按 `as_protagonist` 分流:`true` → 入库 + 创建 `register_character_asset` job + 立即返回 `{job_id}`;`false` → 同步置 `locked=true` + 推进 stage,返回原 `{id, locked, is_protagonist}`。
+- 后端 task `register_character_asset` 把 `ensure_character_asset_registered` 的 3 阶段(create_group / create_asset / wait_active)用 `update_job_progress(done, total=3)` 拆出来推进度。
+- 前端 `charactersApi.lock` 返回 union `CharacterLockResponse | GenerateJobAck`(用 `ack` 字段或 discriminator 区分);store 加 `activeLockCharacterJobId` + `lockCharacterError`,Panel 套现成 `useJobPolling` + 与 generate 同款 banner。
+- `loadCurrent` 接管 in-flight lock job(stage `storyboard_ready`/`characters_locked` 都查一次,因为推进 stage 是 task 末尾事件,可能还在 storyboard_ready)。
+
+**Files:**
+
+后端:
+- Modify: `backend/app/domain/services/character_service.py`(`lock` 分流;抽 `_register_asset_steps` 给 task 复用)
+- New:    `backend/app/tasks/ai/register_character_asset.py`(celery task,3 阶段进度)
+- Modify: `backend/app/tasks/celery_app.py`(注册 task 到 `ai` 队列)
+- Modify: `backend/app/domain/models/job.py`(jobs.kind enum 加 `register_character_asset`)
+- Modify: `backend/app/domain/schemas/character.py`(lock response 改 union 或加 discriminator)
+- New:    `backend/alembic/versions/<rev>_add_register_character_asset_job_kind.py`(若 kind 是数据库 enum 而非应用层枚举)
+- Modify: `backend/app/api/characters.py`(分流路由)
+- Modify: `backend/tests/integration/test_m3a_contract.py`(新增 `test_lock_protagonist_returns_job_ack` / `test_lock_non_protagonist_stays_sync`)
+
+前端:
+- Modify: `frontend/src/types/api.ts`(`CharacterLockResponse` 改 union)
+- Modify: `frontend/src/api/characters.ts`(timeout 撤回 30s,响应类型更新)
+- Modify: `frontend/src/store/workbench.ts`(新增 `activeLockCharacterJobId` / `lockCharacterError` / `lockCharacter` 返回值更新 / `mark*` helper)
+- Modify: `frontend/src/views/WorkbenchView.vue`(`loadCurrent` 接管 in-flight `register_character_asset` job)
+- Modify: `frontend/src/components/character/CharacterAssetsPanel.vue`(替换 persist toast 为 inline banner;失败重试入口)
+- Modify: `frontend/tests/unit/characters.api.spec.ts`(lock 返回 union 的两种形态)
+- Modify: `frontend/tests/unit/workbench.m3a.store.spec.ts`(`lockCharacter(true)` 写入 `activeLockCharacterJobId`,`lockCharacter(false)` 走 sync + reload)
+- Modify: `frontend/scripts/smoke_m3a.sh`(主角锁定改用 job 轮询)
+
+### 后端实现
+
+- [ ] **Step 1: 抽出 `_register_asset_steps(session, character, on_step)`**
+
+把 `character_service.ensure_character_asset_registered` 改写成 3 个**显式**阶段并通过 `on_step(done, label)` 上报:
+
+```python
+# backend/app/domain/services/character_service.py
+async def _register_asset_steps(
+    session: AsyncSession,
+    character: Character,
+    on_step: Callable[[int, str], Awaitable[None]] | None = None,
+) -> None:
+    """1) create_group(若无) 2) create_asset 3) wait_active。幂等。"""
+    if not character.reference_image_url:
+        return
+    video_ref = (character.video_style_ref or {}).copy()
+    if video_ref.get("asset_id") and video_ref.get("asset_status") == "Active":
+        if on_step: await on_step(3, "已入库,跳过")
+        return
+
+    asset_client = get_volcano_asset_client()  # 失败直接抛,task 层捕获
+
+    if not video_ref.get("asset_group_id"):
+        if on_step: await on_step(0, "创建 AssetGroup")
+        group = await asset_client.create_asset_group(
+            name=f"char_{character.id}",
+            description=f"Project {character.project_id} - {character.name}",
+        )
+        video_ref["asset_group_id"] = group["Id"]
+
+    if on_step: await on_step(1, "创建 Asset")
+    if not video_ref.get("asset_id"):
+        asset = await asset_client.create_asset(
+            group_id=video_ref["asset_group_id"],
+            url=build_asset_url(character.reference_image_url),
+            name=character.name,
+        )
+        video_ref["asset_id"] = asset["Id"]
+        video_ref["asset_status"] = "Pending"
+        character.video_style_ref = video_ref
+        await session.flush()
+
+    if on_step: await on_step(2, "等待 Active")
+    final = await asset_client.wait_asset_active(video_ref["asset_id"], timeout=180)
+    video_ref["asset_status"] = final["Status"]
+    video_ref["asset_updated_at"] = datetime.now(timezone.utc).isoformat()
+    character.video_style_ref = video_ref
+    await session.flush()
+    if on_step: await on_step(3, "完成")
+```
+
+`ensure_character_asset_registered` 保留为薄 wrapper(`_register_asset_steps(session, character, on_step=None)`),其它调用方不破坏。
+
+- [ ] **Step 2: 新建 celery task `register_character_asset`**
+
+```python
+# backend/app/tasks/ai/register_character_asset.py
+from app.tasks.celery_app import celery
+from app.infra.db import session_factory
+from app.tasks.shared import update_job_progress  # M2 已建立的唯一 job 写入口
+from app.domain.services.character_service import CharacterService
+from app.pipeline.transitions import advance_to_characters_locked
+
+@celery.task(name="ai.register_character_asset", queue="ai", bind=True)
+def register_character_asset(self, job_id: str, project_id: str, character_id: str):
+    import asyncio
+    asyncio.run(_run(job_id, project_id, character_id))
+
+async def _run(job_id: str, project_id: str, character_id: str) -> None:
+    async with session_factory() as session:
+        await update_job_progress(session, job_id, status="running", done=0, total=3)
+        character = await session.get(Character, character_id)
+        project = await session.get(Project, project_id)
+        try:
+            async def _on_step(done: int, label: str) -> None:
+                await update_job_progress(session, job_id, done=done, total=3, status="running")
+            await CharacterService._register_asset_steps(session, character, on_step=_on_step)
+            # 入库成功后再尝试推进 stage(若主角已锁定)
+            try:
+                await advance_to_characters_locked(session, project)
+            except Exception:
+                pass
+            await session.commit()
+            await update_job_progress(session, job_id, status="succeeded", done=3, total=3)
+        except Exception as e:
+            await update_job_progress(session, job_id, status="failed", error_msg=str(e))
+            raise
+```
+
+注册到 `tasks/celery_app.py` 的 import 列表;路由按 `app.tasks.celery_app` 现有 `task_routes` 前缀 `ai.*` → `ai` 队列即可,不用新增路由规则。
+
+- [ ] **Step 3: `Job.kind` 增加 `register_character_asset`**
+
+如果 `jobs.kind` 是 SQLAlchemy `String` + 应用层 enum,只需在 `domain/models/job.py` 的 enum 类加常量;若是 DB 层 ENUM,补 alembic migration:
+
+```python
+# alembic/versions/<rev>_add_register_character_asset_job_kind.py
+def upgrade():
+    op.execute("""
+        ALTER TABLE jobs MODIFY COLUMN kind ENUM(
+            'parse_novel','gen_storyboard','gen_character_asset','gen_scene_asset',
+            'register_character_asset'
+        ) NOT NULL
+    """)
+
+def downgrade():
+    # 注意:回滚前须确保表里没有该 kind 行,否则 ALTER 会失败
+    op.execute("DELETE FROM jobs WHERE kind = 'register_character_asset'")
+    op.execute("""ALTER TABLE jobs MODIFY COLUMN kind ENUM(
+        'parse_novel','gen_storyboard','gen_character_asset','gen_scene_asset'
+    ) NOT NULL""")
+```
+
+执行者先用 `SHOW CREATE TABLE jobs` 确认实际列定义再选分支。
+
+- [ ] **Step 4: `CharacterService.lock` 分流;新增 `lock_async`**
+
+```python
+@staticmethod
+async def lock(
+    session: AsyncSession, project: Project, character: Character,
+    as_protagonist: bool = False,
+) -> dict:
+    """同步分支(as_protagonist=False):立即置锁 + 尝试推进 stage,返回 {id, locked, is_protagonist}"""
+    assert_asset_editable(project, "character")
+    character.locked = True
+    try:
+        await advance_to_characters_locked(session, project)
+    except Exception:
+        pass
+    return {"id": character.id, "locked": True, "is_protagonist": character.is_protagonist}
+
+@staticmethod
+async def lock_protagonist_async(
+    session: AsyncSession, project: Project, character: Character,
+) -> str:
+    """异步分支:同步完成 lock_protagonist(stage 转换 + 标主角)+ 投递 register_character_asset task,返回 job_id"""
+    assert_asset_editable(project, "character")
+    await lock_protagonist(session, project, character)  # 含主角降级 + locked=True
+    job = await create_job(session, project_id=project.id, kind="register_character_asset")
+    await session.commit()  # 先落库,再投递,避免 task 拿不到 job 行
+    register_character_asset.delay(job.id, project.id, character.id)
+    return job.id
+```
+
+- [ ] **Step 5: 路由分流**
+
+```python
+# backend/app/api/characters.py
+@router.post("/{cid}/lock")
+async def lock_character(cid: str, project_id: str = ..., req: CharacterLockRequest = ...,
+                         db: AsyncSession = Depends(get_db)):
+    project = await _get_project(db, project_id)
+    char = await _get_character(db, cid)
+    as_proto = bool(req and req.as_protagonist)
+    if as_proto:
+        job_id = await CharacterService.lock_protagonist_async(db, project, char)
+        return Envelope.success({"job_id": job_id, "sub_job_ids": [], "ack": "async"})
+    body = await CharacterService.lock(db, project, char, as_protagonist=False)
+    return Envelope.success({**body, "ack": "sync"})
+```
+
+`ack` 字段是 discriminator,前端按它分支处理。`sub_job_ids` 给空数组以复用 `GenerateJobAck` 形状(前端可以走同一类型)。
+
+- [ ] **Step 6: 后端契约测试**
+
+```python
+# backend/tests/integration/test_m3a_contract.py
+async def test_lock_non_protagonist_stays_sync(client, project_storyboard_ready_with_chars):
+    pid, cid = project_storyboard_ready_with_chars
+    resp = await client.post(f"/projects/{pid}/characters/{cid}/lock", json={"as_protagonist": False})
+    body = resp.json()["data"]
+    assert body["ack"] == "sync"
+    assert body["locked"] is True
+
+async def test_lock_protagonist_returns_job_ack(client, project_storyboard_ready_with_chars):
+    pid, cid = project_storyboard_ready_with_chars
+    resp = await client.post(f"/projects/{pid}/characters/{cid}/lock", json={"as_protagonist": True})
+    body = resp.json()["data"]
+    assert body["ack"] == "async"
+    assert body["job_id"]
+    # CELERY_TASK_ALWAYS_EAGER=true 下 task 已同步执行完
+    job = (await client.get(f"/jobs/{body['job_id']}")).json()["data"]
+    assert job["status"] in ("succeeded", "failed")  # mock asset client 应当 succeeded
+```
+
+### 前端实现
+
+- [ ] **Step 7: `types/api.ts` 把 `CharacterLockResponse` 改成 discriminated union**
+
+```ts
+// frontend/src/types/api.ts
+export interface CharacterLockResponseSync {
+  ack: "sync";
+  id: string;
+  locked: boolean;
+  is_protagonist: boolean;
+}
+export interface CharacterLockResponseAsync extends GenerateJobAck {
+  ack: "async";
+}
+export type CharacterLockResponse = CharacterLockResponseSync | CharacterLockResponseAsync;
+```
+
+- [ ] **Step 8: `api/characters.ts` 撤回 timeout**
+
+```ts
+// 异步分支几十 ms 即返回;同步分支也是本地 DB 操作。统一回到 client 默认 15s。
+const LOCK_TIMEOUT_MS = 30_000; // 留 buffer 给慢网络
+lock(projectId, characterId, payload): Promise<CharacterLockResponse> {
+  return client
+    .post(`/projects/${projectId}/characters/${characterId}/lock`, payload, { timeout: LOCK_TIMEOUT_MS })
+    .then((r) => r.data as CharacterLockResponse);
+}
+```
+
+- [ ] **Step 9: `store/workbench.ts` 新增 lock job 追踪**
+
+```ts
+const lockCharacterJob = ref<{ projectId: string; jobId: string; characterId: string } | null>(null);
+const lockCharacterError = ref<string | null>(null);
+const activeLockCharacterJobId = computed<string | null>(() =>
+  scopedJobId(lockCharacterJob.value ? { projectId: lockCharacterJob.value.projectId, jobId: lockCharacterJob.value.jobId } : null)
+);
+const activeLockCharacterId = computed<string | null>(() =>
+  lockCharacterJob.value && current.value && lockCharacterJob.value.projectId === current.value.id
+    ? lockCharacterJob.value.characterId : null
+);
+
+async function lockCharacter(characterId: string, payload: CharacterLockRequest): Promise<void> {
+  if (!current.value) throw new Error("lockCharacter: no current project");
+  lockCharacterError.value = null;
+  const resp = await charactersApi.lock(current.value.id, characterId, payload);
+  if (resp.ack === "async") {
+    lockCharacterJob.value = { projectId: current.value.id, jobId: resp.job_id, characterId };
+    // 不 reload —— 等 job succeed 再 reload
+    return;
+  }
+  await reload();
+}
+function markLockCharacterSucceeded() { lockCharacterJob.value = null; lockCharacterError.value = null; }
+function markLockCharacterFailed(msg: string) { lockCharacterJob.value = null; lockCharacterError.value = msg; }
+```
+
+return 暴露 `activeLockCharacterJobId` / `activeLockCharacterId` / `lockCharacterError` / `markLockCharacter*`。
+
+- [ ] **Step 10: `WorkbenchView.loadCurrent` 接管 in-flight job**
+
+```ts
+async function loadCurrent() {
+  // ... store.load ...
+  if (!store.current) return;
+  if (store.current.stage_raw === "draft") {
+    await store.findAndTrackGenStoryboardJob();
+  } else {
+    store.markParseSucceeded();
+    // M3a Task 14: 接管 in-flight gen_characters / gen_scenes / register_character_asset
+    await store.findAndTrackInFlightAssetJobs();
+  }
+}
+```
+
+`store.findAndTrackInFlightAssetJobs`:
+
+```ts
+async function findAndTrackInFlightAssetJobs() {
+  if (!current.value) return;
+  const jobs = await projectsApi.getJobs(current.value.id);
+  const running = (kind: string) => jobs.find(
+    (j: JobState) => j.kind === kind && (j.status === "queued" || j.status === "running")
+  );
+  const gc = running("gen_character_asset"); // 注意:与 backend kind 对齐,可能是 "gen_characters" 或 "gen_character_asset",以 backend 实际为准
+  if (gc) generateCharactersJob.value = { projectId: current.value.id, jobId: gc.id };
+  const gs = running("gen_scene_asset");
+  if (gs) generateScenesJob.value = { projectId: current.value.id, jobId: gs.id };
+  const rca = running("register_character_asset");
+  if (rca) {
+    // characterId 从 job.result/meta 读;若后端没存,降级为不显示具体角色,只显示 banner
+    const cid = (rca.result as { character_id?: string } | null)?.character_id ?? "";
+    lockCharacterJob.value = { projectId: current.value.id, jobId: rca.id, characterId: cid };
+  }
+}
+```
+
+⚠️ 后端在 `register_character_asset` task 投递时应把 `character_id` 写到 jobs 表的 `result`/`meta` 列(不写 result,因为 result 是终态)。补一个 `meta` 列写入,或用 `JobService.create_job(... meta={character_id})`。**Step 4 实现时同步落地。**
+
+- [ ] **Step 11: `CharacterAssetsPanel.vue` 替换 persist toast 为 inline banner**
+
+```vue
+<script setup lang="ts">
+const {
+  // ...
+  activeLockCharacterJobId,
+  activeLockCharacterId,
+  lockCharacterError
+} = storeToRefs(store);
+
+const { job: lockJob } = useJobPolling(activeLockCharacterJobId, {
+  onProgress: () => void 0,
+  onSuccess: async () => {
+    try {
+      await store.reload();
+      store.markLockCharacterSucceeded();
+      toast.success("主角已锁定并入库");
+    } catch (e) {
+      store.markLockCharacterFailed((e as Error).message);
+    }
+  },
+  onError: (j, err) => {
+    const msg = j?.error_msg ?? (err instanceof ApiError ? messageFor(err.code, err.message) : "锁定失败");
+    store.markLockCharacterFailed(msg);
+    toast.error(msg);
+  }
+});
+
+const lockProgressLabel = computed(() => {
+  const j = lockJob.value;
+  if (!j) return "正在排队…";
+  const map: Record<number, string> = { 0: "创建 AssetGroup", 1: "创建 Asset", 2: "等待 Active", 3: "完成" };
+  return `正在锁定主角… ${map[j.done] ?? `${j.done}/3`}`;
+});
+
+async function handleLock(asProtagonist: boolean) {
+  // ... gate 检查与确认对话框保持原样,删掉 persist toast 与 dismiss 分支 ...
+  busy.value = true;
+  try {
+    await store.lockCharacter(selectedCharacter.value!.id, { as_protagonist: asProtagonist });
+    if (!asProtagonist) toast.success("角色已锁定"); // 异步分支等 onSuccess 再 toast
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 42201) toast.error(messageFor(42201, e.message));
+    else if (e instanceof ApiError) toast.error(messageFor(e.code, e.message));
+    else toast.error("锁定失败");
+  } finally {
+    busy.value = false;
+  }
+}
+</script>
+
+<template>
+  <!-- 在 generate banner 同位置加一个 lock banner;两者互斥 -->
+  <div v-if="activeLockCharacterJobId" class="gen-banner running">
+    <div class="gen-head">
+      <strong>{{ lockProgressLabel }}</strong>
+    </div>
+    <ProgressBar :value="lockJob ? Math.round((lockJob.done / 3) * 100) : 0" />
+    <p class="hint">正在调用人像库,通常 30–90 秒。可继续浏览,完成后会自动刷新。</p>
+  </div>
+  <div v-else-if="lockCharacterError" class="gen-banner error">
+    <div class="gen-head">
+      <strong>主角锁定失败</strong>
+      <button class="ghost-btn small" @click="handleLock(true)">重试</button>
+    </div>
+    <p>{{ lockCharacterError }}</p>
+  </div>
+</template>
+```
+
+并把"设为主角 · 锁定"按钮在 `activeLockCharacterId === selectedCharacter.id` 时 `disabled`(避免重复触发)。
+
+- [ ] **Step 12: 测试更新**
+
+```ts
+// tests/unit/characters.api.spec.ts —— lock 两种返回形态
+it("lock(async) → 返回 ack=async + job_id", async () => {
+  vi.spyOn(client, "post").mockResolvedValue({
+    data: { ack: "async", job_id: "LJ1", sub_job_ids: [] }
+  } as never);
+  const r = await charactersApi.lock("pid", "c1", { as_protagonist: true });
+  expect(r.ack).toBe("async");
+  if (r.ack === "async") expect(r.job_id).toBe("LJ1");
+});
+it("lock(sync) → 返回 ack=sync + locked", async () => {
+  vi.spyOn(client, "post").mockResolvedValue({
+    data: { ack: "sync", id: "c1", locked: true, is_protagonist: false }
+  } as never);
+  const r = await charactersApi.lock("pid", "c1", { as_protagonist: false });
+  expect(r.ack).toBe("sync");
+  if (r.ack === "sync") expect(r.locked).toBe(true);
+});
+```
+
+```ts
+// tests/unit/workbench.m3a.store.spec.ts
+it("lockCharacter(true): 写 activeLockCharacterJobId,不立即 reload", async () => {
+  vi.spyOn(projectsApi, "get").mockResolvedValue(mkProject({ characters: [/* C1 */] }) as any);
+  const lockSpy = vi.spyOn(charactersApi, "lock").mockResolvedValue({
+    ack: "async", job_id: "LJ1", sub_job_ids: []
+  } as any);
+  const store = useWorkbenchStore();
+  await store.load("P1");
+  await store.lockCharacter("C1", { as_protagonist: true });
+  expect(store.activeLockCharacterJobId).toBe("LJ1");
+  expect(lockSpy).toHaveBeenCalledTimes(1);
+  // 此处只 load 1 次(异步分支不 reload)
+});
+it("lockCharacter(false): 同步,完成后 reload", async () => {
+  // ... mockResolvedValueOnce(...) 两次,断言 reload ...
+});
+```
+
+- [ ] **Step 13: smoke_m3a.sh 主角锁定改用 job 轮询**
+
+```bash
+echo "[6/9] 锁定主角(异步)"
+ack=$(curl -s -X POST "$API/projects/$pid/characters/$cid/lock" \
+  -H "Content-Type: application/json" -d '{"as_protagonist": true}')
+ljid=$(echo "$ack" | jq -r '.data.job_id')
+[ "$(echo "$ack" | jq -r '.data.ack')" = "async" ] || { echo "expected async ack"; exit 1; }
+for i in {1..150}; do
+  st=$(curl -s "$API/jobs/$ljid" | jq -r '.data.status')
+  echo "  lock job: $st"
+  [ "$st" = "succeeded" ] && break
+  [ "$st" = "failed" ] && { echo "lock failed"; exit 1; }
+  sleep 2
+done
+stage_raw=$(curl -s "$API/projects/$pid" | jq -r '.data.stage_raw')
+[ "$stage_raw" = "characters_locked" ] || { echo "expected characters_locked"; exit 1; }
+```
+
+- [ ] **Step 14: 自检**
+
+```bash
+# 后端
+cd backend && ./.venv/bin/pytest tests/integration/test_m3a_contract.py -v
+./scripts/smoke_m3a.sh
+
+# 前端
+cd frontend && npm run typecheck && npm test && npm run build
+./scripts/smoke_m3a.sh
+```
+
+- [ ] **Step 15: Commits(分两个,前后端各一)**
+
+```
+feat(backend): 主角入库异步化为 register_character_asset celery task,lock 路由按 as_protagonist 分流
+feat(frontend): 主角锁定改 useJobPolling + inline 进度 banner,撤回 150s 长 timeout
+```
+
+## 增量 DoD
+
+在原 ## DoD 基础上追加:
+
+- [ ] Task 13 自检:`vue-tsc --noEmit` 0 error;`vitest run` 0 fail;手工:在角色 A 触发 regen,切到角色 B,B 的"重新生成参考图"按钮文案 + disable 状态 **不**受影响
+- [ ] Task 14 自检:
+  - [ ] 后端:`pytest tests/integration/test_m3a_contract.py::test_lock_protagonist_returns_job_ack` / `::test_lock_non_protagonist_stays_sync` 绿
+  - [ ] 后端:`SHOW CREATE TABLE jobs` 包含 `register_character_asset` kind
+  - [ ] 前端:`lock(true)` 立即返回 `ack=async`,UI 切换到进度 banner,而非 axios 长连接
+  - [ ] 前端:在 lock job 进行中刷新页面,banner 由 `loadCurrent → findAndTrackInFlightAssetJobs` 自动接管,job succeed 后自动 reload
+  - [ ] 前端:`lock(false)`(普通锁定)路径不变,仍是同步 + reload + toast
+  - [ ] smoke_m3a.sh 的 [6/9] 步骤通过 job 轮询路径绿
+- [ ] Task 15 自检:
+  - [ ] 后端:`pytest tests/integration/test_m3a_contract.py::test_lock_scene_returns_job_ack` 绿
+  - [ ] 后端:`SHOW CREATE TABLE jobs` 包含 `lock_scene_asset` kind
+  - [ ] 前端:`lockScene()` 立即返回 `ack=async`,UI 切换到进度 banner,而非 axios 长连接
+  - [ ] 前端:在 scene lock job 进行中刷新页面,banner 由 `loadCurrent → findAndTrackInFlightAssetJobs` 自动接管,job succeed 后自动 reload
+  - [ ] 前端:当前锁定中的 scene 详情页按钮进入 disable/busy 态,其它 scene 不受影响
+  - [ ] smoke_m3a.sh 的锁定场景步骤通过 job 轮询路径绿
+
+## Task 15: 场景锁定异步化 + 进度条 UI
+
+**Goal:** 把 `lockScene()` 从"同步锁定 + 立即 reload"改成"立即 ack(job_id) + 后端 celery task + 前端 useJobPolling + inline 进度 banner",让"场景设定"与 Task 14 的主角锁定保持同一套异步 UX,并避免场景锁定后推进 `scenes_locked` 时的 HTTP 长连接与刷新丢失状态问题。
+
+**Architecture:**
+- 后端 `POST /scenes/{sid}/lock` 改为统一异步 ack:创建 `lock_scene_asset` job,由 celery task 完成阶段校验、场景锁定、阶段推进与进度更新,HTTP 立即返回 `{job_id}`。
+- task 把场景锁定拆成 3 个显式进度阶段:`校验阶段与绑定完整性` → `写入 locked=true` → `重新计算并推进 stage`;全部 job 状态写入必须继续走 `update_job_progress`。
+- 前端 `scenesApi.lock` 返回 `GenerateJobAck` 同构形状(`ack: "async"` + `job_id`),store 新增 `activeLockSceneJobId` / `activeLockSceneId` / `lockSceneError`;`SceneAssetsPanel.vue` 使用 `useJobPolling` 渲染与 Task 14 同款 inline banner。
+- `WorkbenchView.loadCurrent` / `workbench.findAndTrackInFlightAssetJobs` 扩展接管 `lock_scene_asset` 任务,保证刷新页面后仍能自动恢复 banner 与成功后的 `reload()`。
+
+**Files:**
+
+后端:
+- Modify: `backend/app/domain/services/scene_service.py`(`lock` 分流为异步投递;抽 `_lock_scene_steps` 供 task 复用)
+- New:    `backend/app/tasks/ai/lock_scene_asset.py`(celery task,3 阶段进度)
+- Modify: `backend/app/tasks/celery_app.py`(注册 task 到 `ai` 队列)
+- Modify: `backend/app/domain/models/job.py`(jobs.kind enum 加 `lock_scene_asset`)
+- Modify: `backend/app/domain/schemas/scene.py`(lock response 改为 async ack 形状或 union)
+- New:    `backend/alembic/versions/<rev>_add_lock_scene_asset_job_kind.py`(若 kind 是数据库 enum)
+- Modify: `backend/app/api/scenes.py`(lock 路由改立即 ack)
+- Modify: `backend/tests/integration/test_m3a_contract.py`(新增 `test_lock_scene_returns_job_ack` / `test_lock_scene_job_advances_stage_when_ready`)
+
+前端:
+- Modify: `frontend/src/types/api.ts`(`SceneLockResponse` 改为 discriminated union 或直接复用 `GenerateJobAck`)
+- Modify: `frontend/src/api/scenes.ts`(lock 返回 async ack,不再依赖同步 reload 语义)
+- Modify: `frontend/src/store/workbench.ts`(新增 `activeLockSceneJobId` / `activeLockSceneId` / `lockSceneError` / `markLockScene*`)
+- Modify: `frontend/src/views/WorkbenchView.vue`(`loadCurrent` 接管 in-flight `lock_scene_asset` job)
+- Modify: `frontend/src/components/scene/SceneAssetsPanel.vue`(新增锁定场景进度 banner;失败重试入口;当前 scene busy 态)
+- Modify: `frontend/tests/unit/scenes.api.spec.ts`(lock 返回 async ack)
+- Modify: `frontend/tests/unit/workbench.m3a.store.spec.ts`(`lockScene()` 写入 `activeLockSceneJobId`,不立即 reload)
+- Modify: `frontend/scripts/smoke_m3a.sh`(锁定场景步骤改用 job 轮询)
+
+### 后端实现
+
+- [ ] **Step 1: 抽出 `_lock_scene_steps(session, project, scene, on_step)`**
+
+把 `SceneService.lock` 改成可被 task 复用的显式 3 步流程,并通过 `on_step(done, label)` 上报:
+
+```python
+# backend/app/domain/services/scene_service.py
+async def _lock_scene_steps(
+    session: AsyncSession,
+    project: Project,
+    scene: Scene,
+    on_step: Callable[[int, str], Awaitable[None]] | None = None,
+) -> None:
+    assert_asset_editable(project, "scene")
+
+    if on_step:
+        await on_step(0, "校验场景与镜头绑定")
+    # 保留现有锁定前校验:
+    # 1. scene 属于当前 project
+    # 2. 若业务要求"进入 scenes_locked 前所有镜头均已绑定",则在这里做可重复校验
+
+    if on_step:
+        await on_step(1, "写入锁定状态")
+    scene.locked = True
+    await session.flush()
+
+    if on_step:
+        await on_step(2, "重新计算项目阶段")
+    try:
+        await advance_to_scenes_locked(session, project)
+    except InvalidTransition:
+        # 允许当前 scene 已锁定,但项目仍停留在 characters_locked
+        pass
+
+    if on_step:
+        await on_step(3, "完成")
+```
+
+`SceneService.lock` 保留为薄 wrapper,供测试或其它同步调用方复用,避免锁定规则散落到 router / task。
+
+- [ ] **Step 2: 新建 celery task `lock_scene_asset`**
+
+```python
+# backend/app/tasks/ai/lock_scene_asset.py
+from app.tasks.celery_app import celery
+from app.infra.db import session_factory
+from app.tasks.shared import update_job_progress
+from app.domain.services.scene_service import SceneService
+
+@celery.task(name="ai.lock_scene_asset", queue="ai", bind=True)
+def lock_scene_asset(self, job_id: str, project_id: str, scene_id: str):
+    import asyncio
+    asyncio.run(_run(job_id, project_id, scene_id))
+
+async def _run(job_id: str, project_id: str, scene_id: str) -> None:
+    async with session_factory() as session:
+      await update_job_progress(session, job_id, status="running", done=0, total=3)
+      project = await session.get(Project, project_id)
+      scene = await session.get(Scene, scene_id)
+      try:
+          async def _on_step(done: int, label: str) -> None:
+              await update_job_progress(session, job_id, done=done, total=3, status="running")
+
+          await SceneService._lock_scene_steps(session, project, scene, on_step=_on_step)
+          await session.commit()
+          await update_job_progress(session, job_id, status="succeeded", done=3, total=3)
+      except Exception as e:
+          await session.rollback()
+          await update_job_progress(session, job_id, status="failed", error_msg=str(e))
+          raise
+```
+
+投递 job 时把 `scene_id` 写入 `jobs.payload` / `jobs.meta`,供前端刷新后精确恢复当前锁定中的 scene。
+
+- [ ] **Step 3: `Job.kind` 增加 `lock_scene_asset`**
+
+若 `jobs.kind` 是 DB ENUM,补 migration:
+
+```python
+def upgrade():
+    op.execute("""
+        ALTER TABLE jobs MODIFY COLUMN kind ENUM(
+            'parse_novel','gen_storyboard','gen_character_asset','gen_scene_asset',
+            'register_character_asset','lock_scene_asset'
+        ) NOT NULL
+    """)
+```
+
+先用 `SHOW CREATE TABLE jobs` 确认实际列类型;若只是应用层枚举,只改 `domain/models/job.py` 即可。
+
+- [ ] **Step 4: `SceneService.lock_async` + 路由立即 ack**
+
+```python
+@staticmethod
+async def lock_async(session: AsyncSession, project: Project, scene: Scene) -> str:
+    assert_asset_editable(project, "scene")
+    job = await create_job(
+        session,
+        project_id=project.id,
+        kind="lock_scene_asset",
+        payload={"scene_id": scene.id},
+    )
+    await session.commit()
+    lock_scene_asset.delay(job.id, project.id, scene.id)
+    return job.id
+```
+
+```python
+# backend/app/api/scenes.py
+@router.post("/{sid}/lock")
+async def lock_scene(...):
+    project = await _get_project(db, project_id)
+    scene = await _get_scene(db, sid)
+    job_id = await SceneService.lock_async(db, project, scene)
+    return Envelope.success({
+        "ack": "async",
+        "job_id": job_id,
+        "sub_job_ids": [],
+    })
+```
+
+这样前端与 `generateScenes` / Task 14 lock protagonist 共用同一套 ack 处理逻辑,避免 `lockScene` 继续保留一个特殊同步分支。
+
+- [ ] **Step 5: 后端契约测试**
+
+```python
+async def test_lock_scene_returns_job_ack(client, project_with_bindable_scene):
+    pid, scene_id = project_with_bindable_scene
+    resp = await client.post(f"/projects/{pid}/scenes/{scene_id}/lock", json={})
+    body = resp.json()["data"]
+    assert body["ack"] == "async"
+    assert body["job_id"]
+
+async def test_lock_scene_job_advances_stage_when_ready(client, project_with_all_bound_locked_ready):
+    pid, scene_id = project_with_all_bound_locked_ready
+    resp = await client.post(f"/projects/{pid}/scenes/{scene_id}/lock", json={})
+    job_id = resp.json()["data"]["job_id"]
+    job = (await client.get(f"/jobs/{job_id}")).json()["data"]
+    assert job["status"] in ("succeeded", "failed")
+    project = (await client.get(f"/projects/{pid}")).json()["data"]
+    assert project["stage_raw"] in ("characters_locked", "scenes_locked")
+```
+
+`CELERY_TASK_ALWAYS_EAGER=true` 下可直接断言 job 终态与聚合 `stage_raw`;若 fixture 已满足"所有镜头都已绑定到已锁定场景",则断言最终为 `scenes_locked`。
+
+### 前端实现
+
+- [ ] **Step 6: `types/api.ts` 更新 `SceneLockResponse`**
+
+建议直接与 Task 14 对齐:
+
+```ts
+export interface SceneLockResponseAsync extends GenerateJobAck {
+  ack: "async";
+}
+
+export type SceneLockResponse = SceneLockResponseAsync;
+```
+
+若后端保留 union 也可以,但本任务推荐统一 async,减少 store 分支。
+
+- [ ] **Step 7: `api/scenes.ts` 返回 async ack**
+
+```ts
+lock(projectId: string, sceneId: string): Promise<SceneLockResponse> {
+  return client
+    .post(`/projects/${projectId}/scenes/${sceneId}/lock`, {}, { timeout: 30_000 })
+    .then((r) => r.data as SceneLockResponse);
+}
+```
+
+不再假设 lock 完成后 HTTP 返回时数据已落库;落库以 job succeed 后 `reload()` 为准。
+
+- [ ] **Step 8: `store/workbench.ts` 新增 scene lock job 追踪**
+
+```ts
+const lockSceneJob = ref<{ projectId: string; jobId: string; sceneId: string } | null>(null);
+const lockSceneError = ref<string | null>(null);
+
+const activeLockSceneJobId = computed<string | null>(() =>
+  current.value && lockSceneJob.value && lockSceneJob.value.projectId === current.value.id
+    ? lockSceneJob.value.jobId
+    : null
+);
+
+const activeLockSceneId = computed<string | null>(() =>
+  lockSceneJob.value && current.value && lockSceneJob.value.projectId === current.value.id
+    ? lockSceneJob.value.sceneId
+    : null
+);
+
+async function lockScene(sceneId: string): Promise<void> {
+  if (!current.value) throw new Error("lockScene: no current project");
+  lockSceneError.value = null;
+  const resp = await scenesApi.lock(current.value.id, sceneId);
+  lockSceneJob.value = { projectId: current.value.id, jobId: resp.job_id, sceneId };
+}
+
+function markLockSceneSucceeded() {
+  lockSceneJob.value = null;
+  lockSceneError.value = null;
+}
+
+function markLockSceneFailed(msg: string) {
+  lockSceneJob.value = null;
+  lockSceneError.value = msg;
+}
+```
+
+并在 `findAndTrackInFlightAssetJobs` 中新增:
+
+```ts
+const lsaJob = running("lock_scene_asset");
+if (lsaJob) {
+  const sid = (lsaJob.payload as { scene_id?: string } | null)?.scene_id ?? "";
+  lockSceneJob.value = {
+    projectId: current.value.id,
+    jobId: lsaJob.id,
+    sceneId: sid
+  };
+} else {
+  const failed = lastFailed("lock_scene_asset");
+  if (failed) lockSceneError.value = failed.error_msg;
+}
+```
+
+- [ ] **Step 9: `WorkbenchView.vue` 刷新恢复 in-flight scene lock**
+
+沿用 Task 14 的接管点,不新增第二套入口;只确保 `loadCurrent()` 调用的 `findAndTrackInFlightAssetJobs()` 已覆盖 `lock_scene_asset`。这样页面刷新后 `SceneAssetsPanel` 能直接根据 `activeLockSceneJobId` 恢复 banner。
+
+- [ ] **Step 10: `SceneAssetsPanel.vue` 新增锁定场景进度 banner**
+
+```vue
+const {
+  activeLockSceneJobId,
+  activeLockSceneId,
+  lockSceneError
+} = storeToRefs(store);
+
+const { job: lockJob } = useJobPolling(activeLockSceneJobId, {
+  onProgress: () => void 0,
+  onSuccess: async () => {
+    try {
+      await store.reload();
+      store.markLockSceneSucceeded();
+      toast.success("场景已锁定");
+    } catch (e) {
+      store.markLockSceneFailed((e as Error).message);
+    }
+  },
+  onError: (j, err) => {
+    const msg =
+      j?.error_msg ??
+      (err instanceof ApiError ? messageFor(err.code, err.message) : "锁定失败");
+    store.markLockSceneFailed(msg);
+    toast.error(msg);
+  }
+});
+
+const lockProgressLabel = computed(() => {
+  const j = lockJob.value;
+  if (!j) return "正在排队…";
+  const stepMap: Record<number, string> = {
+    0: "校验场景与绑定",
+    1: "写入锁定状态",
+    2: "重新计算项目阶段",
+    3: "完成"
+  };
+  return `正在锁定场景… ${stepMap[j.done] ?? `${j.done}/3`}`;
+});
+```
+
+模板层增加与 Task 14 同位的 banner:
+
+```vue
+<div v-if="activeGenerateScenesJobId" class="gen-banner running">...</div>
+<div v-else-if="activeLockSceneJobId" class="gen-banner running">
+  <div class="gen-head">
+    <strong>{{ lockProgressLabel }}</strong>
+  </div>
+  <ProgressBar :value="lockJob ? Math.round((lockJob.done / 3) * 100) : 0" />
+  <p class="hint">正在锁定场景并同步项目阶段,完成后会自动刷新。</p>
+</div>
+<div v-else-if="generateScenesError" class="gen-banner error">...</div>
+<div v-else-if="lockSceneError" class="gen-banner error">
+  <div class="gen-head">
+    <strong>场景锁定失败</strong>
+    <button class="ghost-btn small" @click="handleLock">重试</button>
+  </div>
+  <p>{{ lockSceneError }}</p>
+</div>
+```
+
+并把当前选中 scene 的"锁定场景"按钮在 `activeLockSceneId === selectedScene.id` 时禁用,文案可切为 `"锁定中..."`;其它 scene 继续可切换查看。
+
+- [ ] **Step 11: 测试更新**
+
+```ts
+// tests/unit/scenes.api.spec.ts
+it("lock(async) → 返回 ack=async + job_id", async () => {
+  vi.spyOn(client, "post").mockResolvedValue({
+    data: { ack: "async", job_id: "SJ1", sub_job_ids: [] }
+  } as never);
+  const r = await scenesApi.lock("pid", "s1");
+  expect(r.ack).toBe("async");
+  expect(r.job_id).toBe("SJ1");
+});
+```
+
+```ts
+// tests/unit/workbench.m3a.store.spec.ts
+it("lockScene(): 写 activeLockSceneJobId,不立即 reload", async () => {
+  vi.spyOn(projectsApi, "get").mockResolvedValue(mkProject({ scenes: [/* S1 */] }) as any);
+  vi.spyOn(scenesApi, "lock").mockResolvedValue({
+    ack: "async", job_id: "SJ1", sub_job_ids: []
+  } as any);
+  const store = useWorkbenchStore();
+  await store.load("P1");
+  await store.lockScene("S1");
+  expect(store.activeLockSceneJobId).toBe("SJ1");
+});
+```
+
+增加一条面板级测试或 store 断言:当 `lockSceneJob.sceneId = "S1"` 时,`selectedScene = "S2"` 不应误显示 `"锁定中..."`。
+
+- [ ] **Step 12: smoke_m3a.sh 锁定场景步骤改 job 轮询**
+
+```bash
+echo "[8/9] 锁定场景(异步)"
+ack=$(curl -s -X POST "$API/projects/$pid/scenes/$sid/lock" \
+  -H "Content-Type: application/json" -d '{}')
+sjid=$(echo "$ack" | jq -r '.data.job_id')
+[ "$(echo "$ack" | jq -r '.data.ack')" = "async" ] || { echo "expected async ack"; exit 1; }
+for i in {1..150}; do
+  st=$(curl -s "$API/jobs/$sjid" | jq -r '.data.status')
+  echo "  scene lock job: $st"
+  [ "$st" = "succeeded" ] && break
+  [ "$st" = "failed" ] && { echo "scene lock failed"; exit 1; }
+  sleep 2
+done
+stage_raw=$(curl -s "$API/projects/$pid" | jq -r '.data.stage_raw')
+[ "$stage_raw" = "scenes_locked" ] || { echo "expected scenes_locked"; exit 1; }
+```
+
+- [ ] **Step 13: 自检**
+
+```bash
+# 后端
+cd backend && ./.venv/bin/pytest tests/integration/test_m3a_contract.py -v
+./scripts/smoke_m3a.sh
+
+# 前端
+cd frontend && npm run typecheck && npm test && npm run build
+./scripts/smoke_m3a.sh
+```
+
+- [ ] **Step 14: Commits(分两个,前后端各一)**
+
+```
+feat(backend): 场景锁定异步化为 lock_scene_asset celery task
+feat(frontend): 场景锁定改 useJobPolling + inline 进度 banner
+```
+
+## 增量附录
+
+### 附录 D:Task 14 受影响的不变量(覆盖原附录 B 第 3 条)
+
+3'. ~~`lockCharacter(as_protagonist=true)` 走 150s HTTP timeout,不走 job 轮询~~ → **(Task 14)** `lockCharacter(true)` 走异步 job 轮询(`activeLockCharacterJobId` + `useJobPolling`);`lockCharacter(false)` 仍同步 + reload。两条路径在 store 内同名 action 内分流,UI 只关心 `activeLockCharacterJobId` 是否非空决定要不要渲染 banner。
+
+8. **(新增)** `register_character_asset` task 必须把 `character_id` 写入 jobs.meta(或 result),以便前端 `findAndTrackInFlightAssetJobs` 在刷新后能定位被锁的角色。如果 backend 未来重命名该 kind,前端 `WorkbenchView.findAndTrackInFlightAssetJobs` 与 smoke 脚本的 jq 过滤需同步更新。
+
+9. **(新增 / Task 15)** `lockScene()` 不再依赖同步 HTTP 完成锁定与阶段推进,而是统一走异步 job 轮询(`activeLockSceneJobId` + `useJobPolling`)。场景是否已真正锁定、项目是否已进入 `scenes_locked`,一律以后端 job succeed 后的 `reload()` 聚合快照为准。
+
+10. **(新增 / Task 15)** `lock_scene_asset` task 必须把 `scene_id` 写入 jobs.payload/meta,以便前端在刷新页面后恢复当前锁定中的 scene 并仅禁用对应详情区按钮。如果 backend 未来重命名该 kind,前端 `findAndTrackInFlightAssetJobs` 与 smoke 脚本的 jq 过滤需同步更新。
+
+### 附录 E:Task 14 / 15 任务依赖图
+
+```
+Task 13 (review fix)
+  ├─→ Task 14 后端 Step 1-6 (service / task / routes / migration / tests)
+  └─→ Task 14 前端 Step 7-13 (types / api / store / view / panel / tests / smoke)
+        ↑
+        必须等 Task 14 后端 merged,前端才能联调(因为 lock 响应形状变了)
+
+Task 14
+  ├─→ Task 15 后端 Step 1-5 (scene service / task / routes / migration / tests)
+  └─→ Task 15 前端 Step 6-12 (types / api / store / view / panel / tests / smoke)
+        ↑
+        推荐在 Task 14 完成后复用同一套 lock job 追踪与 banner 模式,减少前后端分叉
+```

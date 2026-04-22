@@ -10,7 +10,11 @@ JOB_KIND_VALUES = [
     "parse_novel",
     "gen_storyboard",
     "gen_character_asset",
+    "gen_character_asset_single",
     "gen_scene_asset",
+    "gen_scene_asset_single",
+    "register_character_asset",
+    "lock_scene_asset",
     "render_shot",
     "render_batch",
     "export_video",
@@ -26,6 +30,11 @@ class Job(Base, TimestampMixin):
     project_id: Mapped[str | None] = mapped_column(
         CHAR(26),
         ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    parent_id: Mapped[str | None] = mapped_column(
+        CHAR(26),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
         nullable=True,
     )
     kind: Mapped[str] = mapped_column(Enum(*JOB_KIND_VALUES, name="job_kind"), nullable=False)

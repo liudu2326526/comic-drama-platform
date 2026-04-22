@@ -37,7 +37,11 @@ async def _gen_scene_asset_task(scene_id: str, job_id: str):
                 n=1,
                 size="1024x1024"
             )
-            temp_url = gen_resp.data[0].url
+            # 兼容 dict 和对象返回
+            if isinstance(gen_resp, dict):
+                temp_url = gen_resp["data"][0]["url"]
+            else:
+                temp_url = gen_resp.data[0].url
             
             await update_job_progress(session, job_id, progress=50)
             await session.commit()
@@ -77,10 +81,6 @@ async def _gen_scene_asset_task(scene_id: str, job_id: str):
             await update_job_progress(session, job_id, status="failed", error_msg=str(e))
             await session.commit()
 
-@celery_app.task(name="app.tasks.ai.gen_scene_asset.gen_scene_asset")
-def gen_scene_asset(scene_id: str, job_id: str):
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_gen_scene_asset_task(scene_id, job_id))
-    except RuntimeError:
-        asyncio.run(_gen_scene_asset_task(scene_id, job_id))
+@celery_app.task(name="ai.gen_scene_asset", queue="ai", bind=True)
+def gen_scene_asset(self, scene_id: str, job_id: str):
+    asyncio.run(_gen_scene_asset_task(scene_id, job_id))

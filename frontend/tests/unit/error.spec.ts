@@ -29,4 +29,8 @@ describe("messageFor", () => {
   it("falls back for unknown code", () => {
     expect(messageFor(99999)).toMatch(/未知/);
   });
+
+  it("maps 42201 to '内容违规' text", () => {
+    expect(messageFor(42201)).toContain("内容违规");
+  });
 });

@@ -89,6 +89,22 @@ async def delete_project(project_id: str, db: AsyncSession = Depends(get_db)):
     return ok({"deleted": True})
 
 
+@router.get("/{project_id}/jobs")
+async def list_project_jobs(project_id: str, db: AsyncSession = Depends(get_db)):
+    from app.domain.models import Job
+    from sqlalchemy import select
+    stmt = select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc())
+    jobs = (await db.execute(stmt)).scalars().all()
+    return ok([
+        {
+            "id": j.id,
+            "kind": j.kind,
+            "status": j.status,
+            "progress": j.progress,
+            "created_at": j.created_at
+        } for j in jobs
+    ])
+
 @router.post("/{project_id}/parse")
 async def parse_project(project_id: str, db: AsyncSession = Depends(get_db)):
     from app.config import get_settings

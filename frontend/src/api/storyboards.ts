@@ -1,6 +1,8 @@
 /* frontend/src/api/storyboards.ts */
 import { client } from "./client";
 import type {
+  BindSceneRequest,
+  BindSceneResponse,
   StoryboardConfirmResponse,
   StoryboardCreateRequest,
   StoryboardDeleteResponse,
@@ -47,5 +49,14 @@ export const storyboardsApi = {
     return client
       .post(`/projects/${projectId}/storyboards/confirm`)
       .then((r) => r.data as StoryboardConfirmResponse);
+  },
+  bindScene(
+    projectId: string,
+    shotId: string,
+    payload: BindSceneRequest
+  ): Promise<BindSceneResponse> {
+    return client
+      .post(`/projects/${projectId}/storyboards/${shotId}/bind_scene`, payload)
+      .then((r) => r.data as BindSceneResponse);
   }
 };

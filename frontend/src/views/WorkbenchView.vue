@@ -30,10 +30,8 @@ const STEP_KEYS: WorkflowStep[] = ["setup", "storyboard", "character", "scene", 
 async function loadCurrent() {
   try {
     await store.load(String(route.params.id));
-    // 若项目已过 draft 阶段,上一个 parse job 必然已结束,清掉 job id 避免空转轮询
-    if (store.current?.stage_raw && store.current.stage_raw !== "draft") {
-      store.markParseSucceeded();
-    }
+    // I2: 刷新页面时找回正在运行的任务
+    await store.findAndTrackActiveJobs();
   } catch (e) {
     if (e instanceof ApiError && e.code === 40401) {
       toast.error("项目不存在");

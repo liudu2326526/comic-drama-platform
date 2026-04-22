@@ -12,6 +12,7 @@ const baseJob: JobState = {
   total: 100,
   done: 10,
   result: null,
+  payload: null,
   error_msg: null,
   created_at: "",
   finished_at: null
