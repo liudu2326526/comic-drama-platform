@@ -93,6 +93,34 @@ M3a 增加了 `character`/`scene`/`storyboard` 的复合索引以优化查询性
 
 ---
 
+## M3b Single Shot Rendering
+
+M3b adds `render_shot` for one storyboard shot at a time:
+
+- `POST /api/v1/projects/{project_id}/shots/{shot_id}/render-draft`
+- `POST /api/v1/projects/{project_id}/shots/{shot_id}/render`
+- `GET /api/v1/projects/{project_id}/shots/{shot_id}/renders`
+- `POST /api/v1/projects/{project_id}/shots/{shot_id}/renders/{render_id}/select`
+- `POST /api/v1/projects/{project_id}/shots/{shot_id}/lock`
+
+`POST /render-draft` returns backend-selected prompt + references for user confirmation. `POST /render` returns the standard async ack shape:
+
+```json
+{ "job_id": "01H...", "sub_job_ids": [] }
+```
+
+The created `render_id` is stored in `jobs.payload.render_id` and copied to `jobs.result.render_id` when the task succeeds.
+
+Run smoke after M3a has produced a project at `scenes_locked`:
+
+```bash
+CELERY_TASK_ALWAYS_EAGER=true uvicorn app.main:app --reload --port 8000
+./scripts/smoke_m3b.sh <PROJECT_ID> <SHOT_ID>
+```
+
+Batch render remains M3c; export remains M4.
+
+
 ## M3a 核心变更
 
 - **异常分级**: 实现了 `VolcanoError` 体系，支持自动重试（针对 429/5xx）和业务错误识别（针对内容违规等）。

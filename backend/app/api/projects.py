@@ -101,7 +101,15 @@ async def list_project_jobs(project_id: str, db: AsyncSession = Depends(get_db))
             "kind": j.kind,
             "status": j.status,
             "progress": j.progress,
-            "created_at": j.created_at
+            "total": j.total,
+            "done": j.done,
+            "payload": j.payload,
+            "result": j.result,
+            "error_msg": j.error_msg,
+            "target_type": j.target_type,
+            "target_id": j.target_id,
+            "created_at": j.created_at,
+            "finished_at": j.finished_at,
         } for j in jobs
     ])
 

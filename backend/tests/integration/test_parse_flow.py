@@ -47,29 +47,7 @@ async def test_full_parse_flow_eager(client: AsyncClient, db_session: AsyncSessi
     assert len(project_data["parsedStats"]) > 0
     assert project_data["suggestedShots"] == "建议镜头数 12"
 
-    # 6. 手动触发分镜生成 (模拟 parse_novel 后的链式或手动操作)
-    # 在 M2 中,我们通常是 parse 完后再由用户点"生成分镜"或自动触发。
-    # 根据 parse_novel.py 的实现,它目前只做了 parse。
-    # 我们来测试手动触发 gen_storyboard
-    # 首先需要为 gen_storyboard 创建一个 Job (目前 API 还没提供,直接测任务)
-    from app.tasks.ai.gen_storyboard import gen_storyboard
-    from app.domain.services import JobService
-    
-    job_svc = JobService(db_session)
-    gen_job = await job_svc.create_job(project_id, kind="gen_storyboard")
-    await db_session.commit()
-    
-    # 直接调用任务函数 (eager 模式下同步运行)
-    gen_storyboard(project_id, gen_job.id)
-    
-    # 轮询直到成功
-    for _ in range(20):
-        r = await client.get(f"/api/v1/jobs/{gen_job.id}")
-        if r.json()["data"]["status"] == "succeeded":
-            break
-        await asyncio.sleep(0.5)
-    
-    # 7. 验证分镜已生成且 Stage 已推进
+    # 6. 验证分镜已生成且 Stage 已推进 (在 ALWAYS_EAGER 模式下, /parse 已经链式完成了 gen_storyboard)
     resp = await client.get(f"/api/v1/projects/{project_id}")
     project_data = resp.json()["data"]
     assert project_data["stage_raw"] == ProjectStageRaw.STORYBOARD_READY.value

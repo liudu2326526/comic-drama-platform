@@ -83,6 +83,9 @@ class VolcanoAssetClient:
             trust_env=False,
         )
 
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
     def _now_x_date(self) -> str:
         return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 

@@ -10,6 +10,8 @@ from app.infra.asset_store import build_asset_url
 from app.pipeline.states import ProjectStageRaw
 from app.pipeline.transitions import (
     InvalidTransition,
+    advance_to_ready_for_export_if_complete,
+    advance_to_rendering,
     mark_shot_generating,
     mark_shot_locked,
     select_shot_render_version,
@@ -51,7 +53,9 @@ class ShotRenderService:
         ).scalars().all()
         characters = (
             await self.session.execute(
-                select(Character).where(Character.project_id == project_id).order_by(Character.is_protagonist.desc(), Character.created_at)
+                select(Character)
+                .where(Character.project_id == project_id, Character.locked.is_(True))
+                .order_by(Character.is_protagonist.desc(), Character.created_at)
             )
         ).scalars().all()
         references = self._select_references(shot, scenes, characters)
@@ -103,6 +107,7 @@ class ShotRenderService:
             },
         )
         self.session.add(render)
+        advance_to_rendering(project)
         mark_shot_generating(shot)
         await self.session.flush()
         return render
@@ -143,12 +148,17 @@ class ShotRenderService:
         ]
 
     def _build_draft_prompt(self, shot: StoryboardShot, references: list[dict]) -> str:
-        return (
-            f"镜头标题：{shot.title}\n"
-            f"镜头描述：{shot.description}\n"
-            f"镜头细节：{shot.detail or ''}\n"
-            "请参考图片1中的主场景与后续图片中的角色形象，生成一张竖屏漫剧静帧，电影感构图，主体清晰。"
-        )
+        ref_descriptions = []
+        for i, ref in enumerate(references):
+            kind_zh = "主场景" if ref["kind"] == "scene" else "角色形象"
+            ref_descriptions.append(f"图片{i+1}中的{kind_zh}({ref['name']})")
+
+        header = f"镜头标题：{shot.title}\n镜头描述：{shot.description}\n镜头细节：{shot.detail or ''}\n"
+        if not ref_descriptions:
+            return f"{header}生成一张竖屏漫剧静帧，电影感构图，主体清晰。"
+
+        ref_prompt = "，".join(ref_descriptions)
+        return f"{header}请参考{ref_prompt}，生成一张竖屏漫剧静帧，电影感构图，主体清晰。"
 
     async def list_renders(self, project_id: str, shot_id: str) -> list[ShotRender]:
         await self._get_shot(project_id, shot_id)
@@ -174,6 +184,15 @@ class ShotRenderService:
         shot = await self._get_shot(project_id, shot_id)
         if not shot.current_render_id:
             raise ValueError("镜头没有当前渲染版本，不能锁定")
+        
+        render = await self.session.get(ShotRender, shot.current_render_id)
+        if render is None or render.shot_id != shot.id:
+            raise ApiError(40401, "当前渲染版本已失效或不存在", http_status=404)
+        if render.status != "succeeded":
+            raise ValueError(f"当前渲染版本状态为 {render.status}，只有 succeeded 的版本可锁定")
+
         mark_shot_locked(shot)
         await self.session.flush()
+        project = await self.session.get(Project, project_id)
+        await advance_to_ready_for_export_if_complete(self.session, project)
         return shot

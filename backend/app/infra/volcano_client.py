@@ -26,7 +26,16 @@ class VolcanoClient(ABC):
         pass
 
     @abstractmethod
-    async def image_generations(self, model: str, prompt: str, **kwargs) -> Any:
+    async def image_generations(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        references: list[str] | None = None,
+        n: int = 1,
+        size: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
         pass
 
 
@@ -140,8 +149,17 @@ class MockVolcanoClient(VolcanoClient):
             print(f"\n[AI Chat Output] Model: {model}\nContent: {resp_str}\n")
             return _ChatResponse(resp_str)
 
-    async def image_generations(self, model: str, prompt: str, **kwargs) -> Any:
-        logger.info(f"Mock Volcano Image: model={model}, prompt={prompt[:50]}")
+    async def image_generations(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        references: list[str] | None = None,
+        n: int = 1,
+        size: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        logger.info(f"Mock Volcano Image: model={model}, prompt={prompt[:50]}, refs={len(references or [])}")
         img_url = "https://placehold.co/1024x1024?text=Mock+Image"
         print(f"\n[AI Image Output] Model: {model}\nURL: {img_url}\n")
         return {"data": [{"url": img_url}]}
@@ -201,14 +219,47 @@ class RealVolcanoClient(VolcanoClient):
         print(f"\n[AI Chat Output] Model: {model}\nContent: {resp.choices[0].message.content}\n")
         return resp
 
-    async def image_generations(self, model: str, prompt: str, **kwargs: Any) -> Any:
-        body = {
-            "model": model,
-            "prompt": prompt,
-            "response_format": "url",
-            "watermark": False,
-            **kwargs,
-        }
+    async def image_generations(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        references: list[str] | None = None,
+        n: int = 1,
+        size: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        if references:
+            content = [{"type": "text", "text": prompt}]
+            for ref in references:
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": ref},
+                        "role": "reference_image",
+                    }
+                )
+            body = {
+                "model": model,
+                "content": content,
+                "response_format": "url",
+                "watermark": False,
+                **kwargs,
+            }
+        else:
+            body = {
+                "model": model,
+                "prompt": prompt,
+                "response_format": "url",
+                "watermark": False,
+                **kwargs,
+            }
+
+        if size:
+            body["size"] = size
+        if n != 1:
+            body["n"] = n
+
         resp_json = await self._request_with_retry("POST", "/images/generations", body)
         urls = [item.get("url") for item in resp_json.get("data", [])]
         print(f"\n[AI Image Output] Model: {model}\nURLs: {urls}\n")

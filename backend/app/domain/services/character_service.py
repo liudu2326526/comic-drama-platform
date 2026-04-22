@@ -137,41 +137,46 @@ class CharacterService:
             logger.warning(f"Skip asset registration: {e}")
             return
 
-        # Step 0: Group
-        if not video_ref.get("asset_group_id"):
-            if on_step: await on_step(0, "创建 AssetGroup")
-            group = await asset_client.create_asset_group(
-                name=f"char_{character.id}",
-                description=f"Project {character.project_id} - {character.name}"
-            )
-            video_ref["asset_group_id"] = group["Id"]
+        try:
+            # Step 0: Group
+            if not video_ref.get("asset_group_id"):
+                if on_step: await on_step(0, "创建 AssetGroup")
+                group = await asset_client.create_asset_group(
+                    name=f"char_{character.id}",
+                    description=f"Project {character.project_id} - {character.name}"
+                )
+                video_ref["asset_group_id"] = group["Id"]
 
-        # Step 1: Asset
-        if not video_ref.get("asset_id"):
-            if on_step: await on_step(1, "创建 Asset")
-            public_url = build_asset_url(character.reference_image_url)
-            if not public_url:
-                return
-            asset = await asset_client.create_asset(
-                group_id=video_ref["asset_group_id"],
-                url=public_url,
-                name=character.name
-            )
-            video_ref["asset_id"] = asset["Id"]
-            video_ref["asset_status"] = "Pending"
-            character.video_style_ref = video_ref
-            await session.flush()
+            # Step 1: Asset
+            if not video_ref.get("asset_id"):
+                if on_step: await on_step(1, "创建 Asset")
+                public_url = build_asset_url(character.reference_image_url)
+                if not public_url:
+                    return
+                asset = await asset_client.create_asset(
+                    group_id=video_ref["asset_group_id"],
+                    url=public_url,
+                    name=character.name
+                )
+                video_ref["asset_id"] = asset["Id"]
+                video_ref["asset_status"] = "Pending"
+                character.video_style_ref = video_ref
+                await session.flush()
 
-        # Step 2: Wait
-        if video_ref.get("asset_status") != "Active":
-            if on_step: await on_step(2, "等待 Active")
-            final = await asset_client.wait_asset_active(video_ref["asset_id"], timeout=180)
-            video_ref["asset_status"] = final["Status"]
-            video_ref["asset_updated_at"] = datetime.now(timezone.utc).isoformat()
-            character.video_style_ref = video_ref
-            await session.flush()
-            
-        if on_step: await on_step(3, "完成")
+            # Step 2: Wait
+            if video_ref.get("asset_status") != "Active":
+                if on_step: await on_step(2, "等待 Active")
+                final = await asset_client.wait_asset_active(video_ref["asset_id"], timeout=180)
+                video_ref["asset_status"] = final["Status"]
+                video_ref["asset_updated_at"] = datetime.now(timezone.utc).isoformat()
+                character.video_style_ref = video_ref
+                await session.flush()
+
+            if on_step: await on_step(3, "完成")
+        finally:
+            close = getattr(asset_client, "aclose", None)
+            if close is not None:
+                await close()
 
     @staticmethod
     async def ensure_character_asset_registered(session: AsyncSession, character: Character) -> None:

@@ -72,7 +72,8 @@ async def test_characters_role_cn_mapping(client: AsyncClient):
     assert "data" in resp.json()
 
 @pytest.mark.asyncio
-async def test_lock_non_protagonist_stays_sync(client: AsyncClient):
+async def test_lock_non_protagonist_stays_sync(client: AsyncClient, db_session):
+    from tests.helpers import force_stage
     # 1. 创建项目
     resp = await client.post("/api/v1/projects", json={
         "name": "Lock Sync Test",
@@ -80,20 +81,13 @@ async def test_lock_non_protagonist_stays_sync(client: AsyncClient):
     })
     pid = resp.json()["data"]["id"]
     
-    # 2. 模拟推进到 storyboard_ready (为了让 assert_asset_editable 通过)
-    # 此处简单起见, 我们在测试中允许 InvalidTransition 只要结构对即可
-    # 或者我们 mock 数据, 但集成测试最好走真逻辑。
-    # 既然 smoke_m3a.sh 会测全链路, 这里侧重契约形状。
-    
-    # 创建一个角色
+    # 2. 准备数据
     from sqlalchemy import insert
-    engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.execute(insert(Character).values(
-            id="C_SYNC", project_id=pid, name="SyncChar", role_type="supporting"
-        ))
-        # 强制更新项目 stage 为 storyboard_ready
-        await conn.execute(sa.update(Project).where(Project.id == pid).values(stage="storyboard_ready"))
+    from app.domain.models import Character
+    await db_session.execute(insert(Character).values(
+        id="C_SYNC", project_id=pid, name="SyncChar", role_type="supporting"
+    ))
+    await force_stage(db_session, pid, "storyboard_ready")
     
     resp = await client.post(f"/api/v1/projects/{pid}/characters/C_SYNC/lock", json={"as_protagonist": False})
     assert resp.status_code == 200
@@ -102,7 +96,8 @@ async def test_lock_non_protagonist_stays_sync(client: AsyncClient):
     assert body["locked"] is True
 
 @pytest.mark.asyncio
-async def test_lock_protagonist_returns_job_ack(client: AsyncClient):
+async def test_lock_protagonist_returns_job_ack(client: AsyncClient, db_session):
+    from tests.helpers import force_stage
     # 1. 创建项目
     resp = await client.post("/api/v1/projects", json={
         "name": "Lock Async Test",
@@ -112,12 +107,11 @@ async def test_lock_protagonist_returns_job_ack(client: AsyncClient):
     
     # 2. 准备数据
     from sqlalchemy import insert
-    engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.execute(insert(Character).values(
-            id="C_ASYNC", project_id=pid, name="AsyncChar", role_type="supporting"
-        ))
-        await conn.execute(sa.update(Project).where(Project.id == pid).values(stage="storyboard_ready"))
+    from app.domain.models import Character
+    await db_session.execute(insert(Character).values(
+        id="C_ASYNC", project_id=pid, name="AsyncChar", role_type="supporting"
+    ))
+    await force_stage(db_session, pid, "storyboard_ready")
     
     resp = await client.post(f"/api/v1/projects/{pid}/characters/C_ASYNC/lock", json={"as_protagonist": True})
     assert resp.status_code == 200
@@ -132,27 +126,24 @@ async def test_lock_protagonist_returns_job_ack(client: AsyncClient):
     assert resp_job.json()["data"]["kind"] == "register_character_asset"
 
 @pytest.mark.asyncio
-async def test_lock_scene_returns_job_ack(client: AsyncClient):
+async def test_lock_scene_returns_job_ack(client: AsyncClient, db_session):
+    from tests.helpers import force_stage
     # 1. 准备项目、场景和分镜 (满足推进 scenes_locked 的条件)
     resp = await client.post("/api/v1/projects", json={"name": "SceneLockAsync", "story": "..."})
     pid = resp.json()["data"]["id"]
     
     from app.domain.models import Scene, Project, StoryboardShot
     from sqlalchemy import insert
-    from app.infra.db import get_engine
-    import sqlalchemy as sa
-    engine = get_engine()
-    async with engine.begin() as conn:
-        # 准备场景
-        await conn.execute(insert(Scene).values(
-            id="S_ASYNC", project_id=pid, name="AsyncScene", locked=False
-        ))
-        # 准备分镜并绑定到场景
-        await conn.execute(insert(StoryboardShot).values(
-            id="SHOT_1", project_id=pid, idx=1, title="Shot 1", scene_id="S_ASYNC"
-        ))
-        # 推进到 characters_locked
-        await conn.execute(sa.update(Project).where(Project.id == pid).values(stage="characters_locked"))
+    # 准备场景
+    await db_session.execute(insert(Scene).values(
+        id="S_ASYNC", project_id=pid, name="AsyncScene", locked=False
+    ))
+    # 准备分镜并绑定到场景
+    await db_session.execute(insert(StoryboardShot).values(
+        id="SHOT_1", project_id=pid, idx=1, title="Shot 1", scene_id="S_ASYNC"
+    ))
+    # 推进到 characters_locked
+    await force_stage(db_session, pid, "characters_locked")
 
     # 2. 投递场景锁定任务
     resp = await client.post(f"/api/v1/projects/{pid}/scenes/S_ASYNC/lock", json={})

@@ -1,0 +1,4 @@
+.claude/
+.worktrees/
+logs/
+product/workbench-demo/node_modules/

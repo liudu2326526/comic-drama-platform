@@ -149,7 +149,7 @@ backend/
 | `tags` | JSON | `["角色:沈昭宁","场景:冷宫废院",…]` |
 | `status` | ENUM | 见 §5.2 |
 | `current_render_id` | CHAR(26) NULL FK → `shot_renders.id` | 当前选中版本 |
-| `scene_id` | CHAR(26) NULL FK → `scenes.id` | 绑定的场景资产 |
+| `scene_id` | CHAR(26) NULL FK → `scenes.id` | **兼容旧链路的可选字段**;M3b 起镜头渲染默认不再依赖手工绑定场景,而是由 render draft 自动选择场景/角色参考图 |
 | `created_at` / `updated_at` | DATETIME | |
 
 `UNIQUE (project_id, idx)`
@@ -247,7 +247,9 @@ backend/
 | --- | --- | --- |
 | `id` | CHAR(26) PK | 前端轮询用 |
 | `project_id` | CHAR(26) INDEX | |
+| `parent_job_id` | CHAR(26) NULL FK → `jobs.id`, INDEX | 批量任务父子关系(`render_batch` → `render_shot`) |
 | `kind` | ENUM | `parse_novel` / `gen_storyboard` / `gen_character_asset` / `gen_scene_asset` / `render_shot` / `render_batch` / `export_video` |
+| `idempotency_key` | VARCHAR(128) NULL, UNIQUE | 按业务语义生成;`render_batch` 依赖此键复用 60s 内重复请求 |
 | `target_type` / `target_id` | VARCHAR(32) / CHAR(26) | 绑定的业务对象 |
 | `celery_task_id` | VARCHAR(64) | |
 | `status` | ENUM('queued','running','succeeded','failed','canceled') | |
@@ -263,7 +265,7 @@ backend/
 ### 4.10 ER 关系总览
 
 ```
-projects ─┬─< storyboards ─── scene_id >── scenes
+projects ─┬─< storyboards ─── scene_id >── scenes   (optional / legacy)
           │        │
           │        ├─< shot_renders
           │        └─< shot_character_refs >── characters
@@ -275,6 +277,7 @@ projects ─┬─< storyboards ─── scene_id >── scenes
                                     └── render_id >── shot_renders
 
 jobs ── target_id 软引用到任意业务对象
+  └─< jobs(parent_job_id)  表示批量 job 的父子层级
 ```
 
 ---
@@ -311,7 +314,7 @@ exported
 
 - `stage = draft | storyboard_ready` 时,storyboards 可自由编辑(新增/删除/改文案/重排)
 - 进入 `characters_locked` 之后,storyboards 变为**只读**;任何编辑必须先显式调用 `POST /projects/{id}/rollback` 把 stage 回退到 `storyboard_ready`,同一事务内 pipeline 会:
-  1. 清空所有 `storyboards.scene_id`
+  1. 清空所有 `storyboards.scene_id`(若仍有 legacy 绑定)
   2. 把所有 `storyboards.status` 置回 `pending`、`current_render_id=NULL`(但 `shot_renders` 历史记录保留,不删行、不删图片文件)
   3. 把 `characters.locked`、`scenes.locked` 全部置 FALSE
   4. 响应里返回"被失效的镜头数 / 角色数 / 场景数"供前端提示用户
@@ -344,6 +347,7 @@ pending → generating → succeeded → locked
 4. `is_protagonist=TRUE` 的角色在项目内最多 1 个:
    - **应用层**:`pipeline.transitions.lock_protagonist(project_id, character_id)` 在事务中 `SELECT ... FOR UPDATE` 该项目的所有角色,清除旧主角后再置新主角,全程串行化
    - **DB 兜底**(可选,MVP 不开启):新增生成列 `protagonist_guard = IF(is_protagonist, project_id, NULL)` + `UNIQUE(protagonist_guard)`。这是 MySQL 8 能达到的最接近 partial unique 的写法;MVP 先不上以避免迁移复杂度,后期如发现应用层锁不住再加
+5. `scenes_locked` 只表示"场景资产已生成且锁定",**不再要求每个镜头手工绑定一个 scene_id**;镜头渲染依赖的是 render draft 中自动选择并可由用户确认的 `references`
 
 ---
 
@@ -394,8 +398,8 @@ pending → generating → succeeded → locked
 | PATCH | `/projects/{id}/scenes/{sid}` | 编辑场景 | — |
 | POST | `/projects/{id}/scenes/{sid}/regenerate` | 重新生成参考图 | ✅ job |
 | POST | `/projects/{id}/scenes/{sid}/lock` | 锁定场景 | — |
-| POST | `/projects/{id}/storyboards/{shot_id}/bind_scene` | 绑定镜头到场景 | — |
 | POST | `/projects/{id}/shots/render` | 批量生成全部镜头 | ✅ job (总 + 子) |
+| POST | `/projects/{id}/shots/{shot_id}/render-draft` | 生成单镜头 render draft(建议 prompt + references) | — |
 | POST | `/projects/{id}/shots/{shot_id}/render` | 单镜头生成/重试 | ✅ job |
 | POST | `/projects/{id}/shots/{shot_id}/renders/{render_id}/select` | 把历史版本切为当前 | — |
 | POST | `/projects/{id}/shots/{shot_id}/lock` | 锁定为最终版 | — |
@@ -528,10 +532,16 @@ Content-Type: application/json
   "code": 0,
   "data": {
     "job_id": "01HJOBBATCH...",
-    "sub_job_ids": ["01H...", "01H...", ...]   // 每个子镜头一个 job
+    "sub_job_ids": ["01H...", "01H...", ...]
   }
 }
 ```
+
+说明:
+
+- 该接口只负责创建 `render_batch` 父 job + 若干 `render_shot` 子 job,不在 HTTP 线程内同步生成图片
+- 子 job 与父 job 通过 `jobs.parent_job_id` 建立关系
+- 单镜头 render 的实际输入来自此前由 `POST /projects/{id}/shots/{shot_id}/render-draft` 生成、并由用户确认提交的 `prompt + references`
 
 #### 6.3.7 发起导出
 
@@ -594,7 +604,7 @@ Content-Type: application/json
 | `gen_character_asset` | ai | `character_id` | 3 次 |
 | `gen_scene_asset` | ai | `scene_id` | 3 次 |
 | `render_shot` | ai | `shot_id + version_no` | 按错误类别分级,见下 |
-| `render_batch` | ai | `sha1(project_id + sorted(shot_ids) + force_regenerate + ts_minute)` | 不重试,只是分发器;幂等窗口按分钟级粒度避免重复误判 |
+| `render_batch` | ai | `sha1(project_id + sorted(shot_ids) + force_regenerate + ts_minute)` → `jobs.idempotency_key` | 不重试,只是分发器;60s 内完全相同请求复用已有 queued/running job |
 | `export_video` | video | `export_task_id` | 2 次 |
 
 **`render_shot` 按错误类别的重试策略**:
@@ -605,7 +615,7 @@ Content-Type: application/json
 | 内容违规 / 参数错 | 4xx 非 429 | 1(不自动重试) | — |
 | provider 已接单但 worker crash | 重启后扫描 `status=running` 且 `provider_task_id` 非空 | 不算重试,转走回查流程(见 §7.4) | — |
 
-> `render_batch` 的幂等窗口:以分钟截断 ts(`int(time()/60)`)参与 hash,确保 60s 内完全相同的入参不会重复分发,但超过 1 分钟的"再次批渲"视为新请求,匹配用户行为。
+> `render_batch` 的幂等窗口:以分钟截断 ts(`int(time()/60)`)参与 hash,写入 `jobs.idempotency_key`;若 60s 内收到完全相同的请求,服务端优先返回已存在的 queued/running 父 job,而不是再次分发。超过 1 分钟视为新请求,匹配用户行为。
 
 ### 7.3 进度上报
 
@@ -615,40 +625,45 @@ Content-Type: application/json
 
 ### 7.4 断点续跑
 
-- Worker 启动时扫描 `status='running'` 且 `updated_at` 超 10 分钟的 `jobs` 行,重新入队(幂等键保证不会重复副作用)
-- `render_shot` 在开始时写入 `shot_renders` 行(status=running),worker crash 后可以基于 `provider_task_id` 向火山查询并回收结果,而不是直接重跑
+- Worker 启动时扫描 `status='running'` 且 `updated_at` 超 10 分钟的 `jobs` 行,按任务类型执行恢复决策,**不是一律重新入队**
+- `render_shot` 恢复决策:
+  1. 若 `shot_renders.provider_task_id` 为空:可安全重新入队
+  2. 若 `provider_task_id` 非空:优先向 provider 回查任务状态
+  3. 若 provider 已成功:直接回收结果并补齐 `shot_renders` / `jobs.result`
+  4. 若 provider 明确失败:标记失败,是否重试按错误类别矩阵决定
+  5. 仅当 provider 返回"无此任务"或明确未接单时,才允许补发一次新请求
+- `render_batch` 恢复时不直接重建全部子任务;而是基于 `parent_job_id` 扫描子 job 状态,只补派发缺失的 queued/running 子任务
 
 ---
 
 ## 8. 存储设计
 
-### 8.1 目录规则
+### 8.1 资源归档规则
+
+对象统一落到对象存储(当前实现为 Huawei OBS),按稳定 object key 归档:
 
 ```
-/data/assets/
-  └── {project_id}/
-        ├── character/{yyyymmdd}/{ulid}.png
-        ├── scene/{yyyymmdd}/{ulid}.png
-        ├── shot/{shot_id}/v{version_no}.png
-        └── export/{export_id}.mp4
-        └── export/{export_id}_cover.jpg
+{project_id}/
+  character/{yyyymmdd}/{ulid}.png
+  scene/{yyyymmdd}/{ulid}.png
+  shot/{shot_id}/v{version_no}.png
+  export/{export_id}.mp4
+  export/{export_id}_cover.jpg
 ```
 
-### 8.2 Nginx 映射
+数据库列(`reference_image_url` / `image_url` / `video_url` 等)在 MVP 阶段可继续沿用旧命名,但**语义上存的是稳定 object key 或等价稳定引用**,不是临时签名 URL。
 
-```nginx
-location /static/ {
-  alias /data/assets/;
-  add_header Cache-Control "public, max-age=2592000";
-  # 仅允许内网或可配置 referer
-}
-```
+### 8.2 对外访问语义
 
-数据库里存 **相对路径**(如 `gongqiang/shot/01H.../v1.png`),应用层拼 `STATIC_BASE_URL`(可配置,如 `https://comic.internal/static/`)。
+- 应用层通过 `asset_store.build_asset_url(...)` 或等价 helper 把 object key 转成可访问 URL
+- 传给前端或 AI provider 的引用必须是可访问 URL 或统一的 `asset://...` 语义引用,**不能直接透传裸 object key**
+- `shot_renders.prompt_snapshot` 中建议同时保存:
+  - `reference_image_key` / `image_key` 这类稳定引用
+  - 渲染当次使用的 prompt / references 摘要
 
 ### 8.3 清理策略
 
-- 软删除项目时,异步任务在 24h 后清理磁盘
+- 软删除项目时,异步任务在 24h 后清理对象存储资源
 - 历史 render 版本不自动清理(保留回退能力);提供 `POST /admin/projects/{id}/vacuum` 手工回收非当前版本图片
 
 ---
@@ -656,24 +671,37 @@ location /static/ {
 ## 9. 配置与环境变量
 
 ```
-# 数据库
-DATABASE_URL=mysql+asyncmy://root:***@172.16.7.108:3308/comic_drama
+# MySQL(组件化变量,由 Settings 组装 URL)
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=***
+MYSQL_DATABASE=comic_drama
+MYSQL_DATABASE_TEST=comic_drama_test
 
-# Redis
-REDIS_URL=redis://127.0.0.1:6379/0
-CELERY_BROKER_URL=redis://127.0.0.1:6379/1
-CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/2
+# Redis(业务 / broker / result 分库)
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_DB_BROKER=1
+REDIS_DB_RESULT=2
 
-# 存储
-STORAGE_ROOT=/data/assets
-STATIC_BASE_URL=http://comic.internal/static/
+# AI provider
+AI_PROVIDER_MODE=real
+ARK_API_KEY=***
+ARK_CHAT_MODEL=***
+ARK_IMAGE_MODEL=***
 
-# 火山
-VOLCANO_ACCESS_KEY=***
-VOLCANO_SECRET_KEY=***
-VOLCANO_LLM_MODEL=doubao-pro-32k
-VOLCANO_IMG_MODEL=seedream-...
-VOLCANO_BASE_URL=https://...
+# 火山素材库
+VOLC_ACCESS_KEY_ID=***
+VOLC_SECRET_ACCESS_KEY=***
+
+# Huawei OBS
+OBS_AK=***
+OBS_SK=***
+OBS_ENDPOINT=https://obs.cn-east-3.myhuaweicloud.com
+OBS_BUCKET=comic-drama
+OBS_PUBLIC_BASE_URL=https://assets.example.com
 
 # worker
 AI_WORKER_CONCURRENCY=8
@@ -702,8 +730,8 @@ LOG_LEVEL=INFO
 ## 11. 测试策略
 
 - **单元测试**(`tests/unit/`):domain/services 与 pipeline/transitions,不连 DB,mock 掉 repo
-- **集成测试**(`tests/integration/`):FastAPI TestClient + 真实 MySQL(CI 用 docker 拉起)+ fake VolcanoClient(返回固定占位图 / 假分镜 JSON)+ eager Celery(`CELERY_TASK_ALWAYS_EAGER=True`)
-- **端到端冒烟**:脚本 `scripts/e2e_smoke.py` 模拟一次完整链路(创建项目 → 解析 → 角色锁定 → 场景锁定 → 渲染 → 导出),每次 PR 合并前跑一次
+- **集成测试**(`tests/integration/`):FastAPI TestClient + 真实 MySQL(CI 用 docker 拉起)+ fake VolcanoClient(返回固定占位图 / 假分镜 JSON)+ eager Celery(`CELERY_TASK_ALWAYS_EAGER=True`);M3c/M4 另补非 eager 场景,覆盖父子 job 聚合、provider recovery、导出快照一致性
+- **端到端冒烟**:脚本 `scripts/e2e_smoke.py` 模拟一次完整链路(创建项目 → 解析 → 角色锁定 → 场景锁定 → render-draft / 渲染 → 导出),每次 PR 合并前跑一次;M3c 额外补批量渲染 smoke,M4 额外补导出快照 smoke
 - **覆盖目标**:pipeline/transitions 100%,domain/services ≥ 80%,API 层 ≥ 60%
 
 ---
@@ -763,7 +791,7 @@ services:
 | `scenes` | `SceneAsset[]` | 见下表 | |
 | `generationProgress` | string | `` `${succeeded} / ${total} 已完成` `` | 服务端计算 |
 | `generationNotes` | `{input,suggestion}` | `{ input: 最近一次 render 的 prompt_snapshot 摘要, suggestion: AI 或规则生成的下一轮优化建议 }` | MVP `suggestion` 可先写固定规则,后期走 LLM |
-| `generationQueue` | `RenderQueueItem[]` | 取每个 shot 的 `current_render` | 见下表 |
+| `generationQueue` | `RenderQueueItem[]` | 取项目下活跃/最近的 jobs,其中 `kind=render_shot` 的项追加 render metadata | 见下表 |
 | `exportConfig` | string[] | `export_tasks` 最新任务的 config 展平 | `["比例:9:16","分辨率:1080 x 1920",...]` |
 | `exportDuration` | string | `"预计成片时长:" + Σ(duration_sec) + " 秒"` | |
 | `exportTasks` | `ExportTask[]` | `export_tasks where project` | 见下表 |
@@ -798,7 +826,7 @@ services:
 | `id` | `scenes.id` |
 | `name` | `scenes.name` |
 | `summary` | `scenes.summary` |
-| `usage` | `` `场景复用 ${被多少 shot 绑定} 镜头` `` | 由 scene_id 反查 count 计算 |
+| `usage` | `` `场景被 ${被多少 draft/reference 采用} 次` `` | 由 render draft / 历史 render 引用统计;若仍有 legacy `scene_id`,可兼容计入 |
 | `description` | `scenes.description` |
 | `meta` | `scenes.meta` |
 | `theme` | `scenes.theme` |
@@ -807,10 +835,15 @@ services:
 
 | 前端字段 | 后端来源 |
 | --- | --- |
-| `id` | `storyboards.id`(每个 shot 一条) |
-| `title` | `"镜头 " + zero_padded(idx)` |
-| `summary` | `storyboards.title` |
-| `status` | 由 `storyboards.status` 映射:`succeeded/locked→success` / `generating→processing` / `failed/pending→warning` |
+| `id` | `jobs.id` |
+| `title` | 对 `render_shot` 为 `"镜头 " + zero_padded(idx)`;对 `render_batch`/`export_video` 为 job 名称 |
+| `summary` | 由 job kind + 目标对象生成 |
+| `status` | 由 `jobs.status` 映射:`running→processing` / `succeeded→success` / `queued/failed/canceled→warning` |
+| `targetId` | `jobs.target_id` |
+| `shotId` | 对 `render_shot` 为 `jobs.target_id` 或 `jobs.result/payload.shot_id` |
+| `renderId` | `jobs.payload.render_id` 或 `jobs.result.render_id` |
+| `progress` | `jobs.progress` |
+| `errorCode` / `errorMsg` | 来自 `shot_renders.error_code/error_msg` 或 `jobs.error_msg` |
 
 **`ExportTask`**:
 
@@ -849,9 +882,11 @@ services:
 ## 14. 风险与开放问题
 
 - **火山图像模型角色一致性**:真实接入后若一致性不够,可能需要引入 LoRA 或参考图分镜级增强 → 在 `shot_renders.prompt_snapshot` 已预留完整上下文,后续不改表
+- **批量任务恢复复杂度**:`render_batch` 需要同时处理父子 job 聚合、重复点击幂等、worker crash 后的 provider 回查,必须依赖 `parent_job_id + idempotency_key + provider_task_id` 三件套,不能只靠 Celery 默认重试
 - **视频合成耗时**:FFmpeg 串行合成 20 个镜头估算 30~90 秒,`video` worker 独立避免阻塞 AI 任务
 - **MVP 不做软删除**:`DELETE /projects/{id}` 是硬删,级联清理;如果后期要撤销,需加 `deleted_at` 列并改所有查询
 - **配额/并发保护**:`AI_RATE_LIMIT_PER_MIN` 是粗粒度,若火山按模型分别计费,需要后续在 `VolcanoClient` 里按 model 区分令牌桶
+- **导出一致性**:M4 的 `export_shot_snapshots` 是强约束,导出必须基于快照固定 render 版本,不能直接读 `storyboards.current_render_id`,否则重渲后历史导出会漂移
 
 ---
 
@@ -862,9 +897,9 @@ services:
 | M1 | 基础骨架:FastAPI + SQLAlchemy + Alembic + Celery 跑通 hello world;项目 CRUD + rollback 端点 + stage 状态机骨架(mock 阶段跃迁) |
 | M2 | Pipeline + mock VolcanoClient:小说解析 + 分镜生成(假数据)全流程;前端能走通工作台 UI,前后端字段一对一联调通过 |
 | M3a | 接真实火山(文本+图像):角色资产生成、场景资产生成与锁定 |
-| M3b | 单镜头渲染:`render_shot` 全链路打通、`shot_renders` 版本表、历史版本切换接口 |
-| M3c | 批量渲染:`render_batch` 聚合 job、按错误类别重试策略、worker crash 后回查恢复(§7.4) |
-| M4 | 导出链路:FFmpeg 合成 + `export_shot_snapshots` 快照 + 下载 + 导出前完整性校验 |
+| M3b | 单镜头渲染:`render_shot` 全链路打通、`render-draft → confirm render`、`shot_renders` 版本表、历史版本切换接口 |
+| M3c | 批量渲染:`render_batch` 父子 job 聚合、60s 幂等复用、按错误类别重试策略、worker crash 后 provider 回查恢复(§7.4) |
+| M4 | 导出链路:FFmpeg 合成 + `export_shot_snapshots` 快照 + 下载 + 导出前完整性校验(不依赖 `current_render_id`) |
 | M5 | 运维收尾:断点续跑全场景覆盖、错误码矩阵、集成测试 ≥80%、docker-compose 一键部署、健康检查 |
 
 ---

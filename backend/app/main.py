@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, projects, jobs, storyboards, characters, scenes
+from app.api import health, projects, jobs, storyboards, characters, scenes, shots
 from app.api.errors import register_handlers
 from app.config import get_settings
 from app.utils.logger import configure_logging, get_logger
@@ -46,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(storyboards.router, prefix="/api/v1")
     app.include_router(characters.router, prefix="/api/v1")
     app.include_router(scenes.router, prefix="/api/v1")
+    app.include_router(shots.router, prefix="/api/v1")
     return app
 
 

@@ -32,6 +32,11 @@ def run_alembic_upgrade(connection, cfg):
     command.upgrade(cfg, "head")
 
 
+@pytest.fixture
+def settings():
+    return get_settings()
+
+
 @pytest_asyncio.fixture(scope="session")
 async def test_engine() -> AsyncEngine:
     settings = get_settings()
@@ -88,8 +93,9 @@ async def client(test_engine):
     from app.main import create_app
 
     settings = get_settings()
-    # 强制在测试环境中启用 ALWAYS_EAGER
+    # 强制在测试环境中启用 ALWAYS_EAGER 并默认使用 mock AI
     settings.celery_task_always_eager = True
+    settings.ai_provider_mode = "mock"
     try:
         from app.tasks.celery_app import celery_app
         celery_app.conf.task_always_eager = True

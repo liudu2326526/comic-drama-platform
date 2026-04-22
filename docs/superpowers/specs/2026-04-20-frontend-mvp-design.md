@@ -228,10 +228,10 @@ actions:
   lockCharacter(characterId)
   regenerateCharacter(characterId) → returns jobId
   regenerateScene(sceneId) → returns jobId
-  bindShotScene(shotId, sceneId)
   lockScene(sceneId)
 
-  renderShot(shotId, force=false) → returns jobId
+  fetchRenderDraft(shotId) → returns { prompt, references }
+  confirmRenderShot(shotId, payload) → returns jobId
   renderBatch(force=false) → returns { jobId, subJobIds }
   selectRenderVersion(shotId, renderId)
   lockShot(shotId)
@@ -407,25 +407,28 @@ const { job } = useJobPolling(jobIdRef, {
   - 选中场景后显示:`重新生成参考图` / `锁定`
   - **不提供"手动新增场景"按钮**(理由同角色);demo 里的 `新增场景资产` 按钮在 MVP 中隐藏
 - 详情区展示 `theme` 对应的装饰层(demo 的 `theme-palace/academy/harbor`) + 真实参考图
-- 额外:每个场景卡片显示 `usage`(`场景复用 X 镜头`),点击可展开"关联的镜头 id 列表",提供批量绑定当前选中的 shot
+- 额外:每个场景卡片显示 `usage`(`场景被 X 次 draft/reference 采用`),用于帮助用户理解哪些场景经常被镜头生成引用;**不再提供镜头绑定入口**
 
 #### 7.3.5 `GenerationPanel`(镜头生成页)
 
 demo 最薄弱的 panel,需大幅扩展:
 
-- 顶部:`generationProgress` 文案 + `批量继续生成 / 全量重渲` 按钮
+- 顶部:`generationProgress` 文案 + `批量继续生成 / 全量重渲` 按钮(M3c)
 - 左列:`RenderQueueList`,每行一个 shot
   - 左侧:`镜头 NN` + title
   - 右侧:`status` 徽标(success / processing / warning) + `版本号 vX`
-  - 单行按钮:`重新生成` / `查看历史版本`
-- 右列:选中 shot 的 `preview-frame`
-  - `image_url` 展示;生成中显示骨架屏 + 轮询 progress
-  - 底部 `使用输入 / 生成建议`(`generationNotes`)
+  - 单行按钮:`生成草稿 / 重新生成` / `查看历史版本`
+- 右列:选中 shot 的 `preview-frame + draft editor`
+  - 首次进入先调 `/shots/{shot_id}/render-draft`,拿到建议 `prompt + references`
+  - 用户可在前端临时编辑 prompt,也可增删建议的角色/场景参考图
+  - 点击 `确认生成` 后,才把最终 `prompt + references` 提交给 `/shots/{shot_id}/render`
+  - `image_url` 展示当前 render;生成中显示骨架屏 + 轮询 progress
+  - `generationNotes` 仅展示当前版本的 prompt / suggestion 摘要,不再作为未提交 draft 的存储来源
 - 弹出组件:
   - `RenderVersionHistory`:shot 所有 `shot_renders` 的时间轴,缩略图 + `prompt_snapshot` 摘要,点击"切为当前"→ `/renders/{renderId}/select`
   - `RenderRetryBanner`:若 shot `status=failed`,顶部出警示条,分类显示失败原因(对齐后端错误分类)
 - 进入导出前置:Panel 显示"锁定全部为最终版"便捷按钮,批量把所有 succeeded → locked
-- 阶段门:`stage ∈ {scenes_locked, rendering, ready_for_export}` 才能触发渲染;其他阶段按钮灰化
+- 阶段门:`stage ∈ {scenes_locked, rendering}` 才能触发渲染;若已到 `ready_for_export` 或 `exported`,需先 rollback
 
 #### 7.3.6 `ExportPanel`
 
@@ -543,13 +546,13 @@ export interface ProjectData {
 }
 ```
 
-其他(StoryboardShot / CharacterAsset / SceneAsset / RenderQueueItem / ExportTask)对应后端 spec §13.1 保持不变,`characters.role` / `scenes.usage` / `exportTasks.progressLabel` 由后端格式化好直出。
+其他(StoryboardShot / CharacterAsset / SceneAsset / RenderQueueItem / ExportTask)对应后端 spec §13.1 保持同步。其中 `RenderQueueItem` 已从 demo 时代的 shot 列表升级为 **job-based queue item**:前端基于 `storyboards + generationQueue` 组合出镜头视图,`characters.role` / `scenes.usage` / `exportTasks.progressLabel` 由后端格式化好直出。
 
 ### 9.2 展示值 vs 原始值
 
 | 场景 | 展示值 | 原始值 |
 | --- | --- | --- |
-| 项目 stage | `stage`(中文 3 值) | `stage_raw`(英文 ENUM)|
+| 项目 stage | `stage`(中文 7 值) | `stage_raw`(英文 ENUM)|
 | shot duration | `duration` 字符串 `"3.5 秒"` | 无需(MVP 不改 shot 时长) |
 | 渲染状态 | `RenderQueueItem.status`(success/processing/warning) | 无 |
 | export 状态 | `ExportTask.status` + `progressLabel` | 无 |
@@ -565,8 +568,12 @@ export interface ProjectData {
 export const shotsApi = {
   renderBatch: (projectId: string, body: { shot_ids: string[] | null; force_regenerate: boolean }) =>
     client.post<void, { job_id: string; sub_job_ids: string[] }>(`/projects/${projectId}/shots/render`, body),
-  renderOne: (projectId: string, shotId: string) =>
-    client.post<void, { job_id: string }>(`/projects/${projectId}/shots/${shotId}/render`),
+  fetchRenderDraft: (projectId: string, shotId: string) =>
+    client.post<void, { shot_id: string; prompt: string; references: RenderDraftReference[] }>(
+      `/projects/${projectId}/shots/${shotId}/render-draft`
+    ),
+  renderOne: (projectId: string, shotId: string, body: { prompt: string; references: RenderDraftReference[] }) =>
+    client.post<typeof body, { job_id: string }>(`/projects/${projectId}/shots/${shotId}/render`, body),
   listRenders: (projectId: string, shotId: string) =>
     client.get<void, RenderVersion[]>(`/projects/${projectId}/shots/${shotId}/renders`),
   selectRender: (projectId: string, shotId: string, renderId: string) =>
@@ -696,8 +703,8 @@ server: {
 | M1 | 工程脚手架:Vite + TS + Vue Router + Pinia + axios;迁移 demo 的静态样式和组件;联调项目 CRUD 和 `/rollback`;引入 `useJobPolling` 空壳 |
 | M2 | 接入 mock 后端的 `/parse` + `/storyboards/*`;`ProjectSetupPanel` 和 `StoryboardPanel` 真实可交互;状态门初版 `useStageGate` 上线 |
 | M3a | `CharacterAssetsPanel` / `SceneAssetsPanel` 写操作打通(编辑/生成/锁定/重生成),版本历史入口上线 |
-| M3b | `GenerationPanel` + `RenderVersionHistory`:单镜头渲染、切换版本、失败重试 |
-| M3c | 批量渲染 UI + 并发 job 进度聚合展示 + worker crash 后前端对 running job 的恢复提示 |
+| M3b | `GenerationPanel` + `RenderVersionHistory`:单镜头 `render-draft → confirm render`、切换版本、失败重试 |
+| M3c | 批量渲染 UI + job-based queue 聚合展示 + worker crash 后前端对 running job 的恢复提示 |
 | M4 | `ExportPanel` 完整链路 + 下载 + 完整性校验 + 409 缺失列表跳转 |
 | M5 | 错误码全量文案覆盖、toast / confirm / modal 三件套打磨、空态/错误态/骨架屏全量上线、生产 build 和 Nginx 联调通过 |
 
@@ -707,7 +714,7 @@ server: {
 
 - **~~`stage_raw` 字段~~**:已同步到后端 spec §13.1 / §13.2(7 值中文 + 7 值英文双字段),不再是开放项
 - **参考图加载延迟**:火山图像生成返回的 `image_url` 如果不是稳定 CDN,首次打开 workbench 时批量懒加载可能抖。MVP 接真实后端时观察,必要时前端加一层 `loading=eager` + skeleton
-- **轮询风暴**:同一项目同时跑 14+ 个 `render_shot` 子 job,如果每个都独立轮询会扎后端。**对策**:`GenerationPanel` 统一轮询**主 job** (`render_batch`),子状态从主 job 的 `result` 派生;`result` 里由后端定期回填子 shot 状态快照
+- **轮询风暴**:同一项目同时跑 14+ 个 `render_shot` 子 job,如果每个都独立轮询会扎后端。**对策**:优先依赖后端聚合返回的 `generationQueue`(job-based) 恢复和展示子状态;批量渲染时可重点轮询 `render_batch` 父 job 的总进度,但单镜头/子镜头的失败原因与进度不强依赖父 job `result`
 - **离线编辑回写**:MVP 无本地草稿缓存,若浏览器崩掉,用户在 `ProjectCreateView` 的未提交输入会丢。MVP 不做 localStorage 缓存,留待后期
 - **版本历史磁盘占用**:UI 展示历史 render 图片,但后端 spec 说明不自动清理;前端 MVP 不主动暴露"清理非当前版本"的按钮(对应后端 `/admin/projects/:id/vacuum`),留到运维/后台
 

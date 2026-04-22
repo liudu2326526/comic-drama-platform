@@ -1,6 +1,7 @@
+import json
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.domain.models import Project, StoryboardShot, Job, ExportTask, Character, Scene
+from app.domain.models import Project, StoryboardShot, Job, ExportTask, Character, Scene, ShotRender
 from app.domain.schemas.project import ProjectDetail
 from app.pipeline.states import STAGE_ZH, ProjectStageRaw
 from app.infra.asset_store import build_asset_url
@@ -20,11 +21,13 @@ class AggregateService:
         stmt_storyboards = select(StoryboardShot).where(StoryboardShot.project_id == project_id).order_by(StoryboardShot.idx)
         storyboards = (await self.session.scalars(stmt_storyboards)).all()
         
-        # 2. 获取生成队列 (正在运行的 jobs)
+        # 2. 获取生成队列 (活跃中的 jobs + 最近完成的 5 条记录供前端展示/快照)
         stmt_jobs = select(Job).where(
-            Job.project_id == project_id,
-            Job.status.in_(["queued", "running"])
-        ).order_by(Job.created_at.desc())
+            Job.project_id == project_id
+        ).order_by(
+            func.field(Job.status, "running", "queued", "failed", "succeeded", "canceled"),
+            Job.created_at.desc()
+        ).limit(20)
         jobs = (await self.session.scalars(stmt_jobs)).all()
         
         # 3. 获取角色和场景
@@ -44,8 +47,41 @@ class AggregateService:
         # 4. 获取导出任务
         stmt_exports = select(ExportTask).where(ExportTask.project_id == project_id).order_by(ExportTask.created_at.desc())
         exports = (await self.session.scalars(stmt_exports)).all()
+
+        # 5. 获取渲染详情供队列展示
+        shot_map = {s.id: s for s in storyboards}
+        generation_queue = [{
+            "id": j.id,
+            "kind": j.kind,
+            "status": j.status,
+            "progress": j.progress,
+            "target_id": j.target_id,
+            "payload": j.payload,
+            "result": j.result,
+        } for j in jobs]
         
-        # 5. 拼装进度文字
+        queue_render_ids = [
+            item.get("result", {}).get("render_id") or item.get("payload", {}).get("render_id")
+            for item in generation_queue
+            if item.get("kind") == "render_shot"
+        ]
+        render_ids = list({rid for rid in [*(s.current_render_id for s in storyboards if s.current_render_id), *queue_render_ids] if rid})
+        render_map = {}
+        if render_ids:
+            current_renders = (
+                await self.session.execute(select(ShotRender).where(ShotRender.id.in_(render_ids)))
+            ).scalars().all()
+            render_map = {r.id: r for r in current_renders}
+
+        latest_render = None
+        if render_ids:
+            latest_render = max(
+                (render_map[rid] for rid in render_ids if rid in render_map),
+                key=lambda r: r.created_at,
+                default=None,
+            )
+        
+        # 6. 拼装进度文字
         total_shots = len(storyboards)
         done_shots = sum(1 for s in storyboards if s.status in ["succeeded", "locked"])
         progress_text = f"{done_shots} / {total_shots} 已完成" if total_shots > 0 else "0 / 0 已完成"
@@ -113,13 +149,51 @@ class AggregateService:
                 "usage": f"场景复用 {usage_map.get(s.id, 0)} 镜头"
             } for s in scenes],
             generationProgress=progress_text,
-            generationNotes={"input": "", "suggestion": ""},
-            generationQueue=[{
-                "id": j.id,
-                "kind": j.kind,
-                "status": j.status,
-                "progress": j.progress
-            } for j in jobs],
+            generationNotes={
+                "input": "" if latest_render is None else json.dumps(latest_render.prompt_snapshot or {}, ensure_ascii=False, indent=2),
+                "suggestion": "可从历史版本中选择当前镜头，或重试失败镜头。",
+            },
+            generationQueue=[
+                {
+                    **item,
+                    "shot_id": item.get("target_id") if item.get("kind") == "render_shot" else None,
+                    "render_id": (
+                        item.get("result", {}).get("render_id") or item.get("payload", {}).get("render_id")
+                        if item.get("kind") == "render_shot"
+                        else None
+                    ),
+                    "image_url": (
+                        build_asset_url(render_map[resolved_render_id].image_url)
+                        if item.get("kind") == "render_shot"
+                        and (resolved_render_id := (item.get("result", {}).get("render_id") or item.get("payload", {}).get("render_id"))) in render_map
+                        else None
+                    ),
+                    "version_no": (
+                        render_map[resolved_render_id].version_no
+                        if item.get("kind") == "render_shot"
+                        and (resolved_render_id := (item.get("result", {}).get("render_id") or item.get("payload", {}).get("render_id"))) in render_map
+                        else None
+                    ),
+                    "shot_status": (
+                        shot_map[item["target_id"]].status
+                        if item.get("kind") == "render_shot" and item.get("target_id") in shot_map
+                        else None
+                    ),
+                    "error_code": (
+                        render_map[resolved_render_id].error_code
+                        if item.get("kind") == "render_shot"
+                        and (resolved_render_id := (item.get("result", {}).get("render_id") or item.get("payload", {}).get("render_id"))) in render_map
+                        else None
+                    ),
+                    "error_msg": (
+                        render_map[resolved_render_id].error_msg or item.get("error_msg")
+                        if item.get("kind") == "render_shot"
+                        and (resolved_render_id := (item.get("result", {}).get("render_id") or item.get("payload", {}).get("render_id"))) in render_map
+                        else None
+                    ),
+                }
+                for item in generation_queue
+            ],
             exportConfig=[],
             exportDuration="",
             exportTasks=[{

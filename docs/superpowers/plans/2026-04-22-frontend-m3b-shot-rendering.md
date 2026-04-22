@@ -4,7 +4,7 @@
 
 **Goal:** 在 M3a 已交付的工作台基础上，把 `GenerationPanel` 从静态占位升级为“先生成草稿、用户临时编辑提示词和参考图、确认后再真正生成”的 M3b 镜头生成页，打通单镜头异步渲染、历史版本查看与切换、最终版锁定、刷新后 in-flight job 恢复，以及与后端 M3b draft/job/aggregate 契约一致的 UI。
 
-**Architecture:** 延续 M2/M3a 的原则：HTTP 写操作只拿 ack / 同步结果，真正的状态来源统一以 `GET /projects/{id}` 聚合快照为准；前端不做乐观合并。M3b 前端先调用 `POST /render-draft` 获取后端建议的 prompt 和 reference images，在本地临时编辑后，再调用 `POST /render` 真正创建 job；未确认的草稿不落库。M3b 前端只支持“同一项目一次只发起一个镜头 render_shot job”，避免在 `GenerationPanel` 里再造并发调度器；批量继续生成、全量重渲、锁定全部最终版仍留给 M3c/M4。后端 `generationQueue` 在 M3b 继续保持 job-based 语义，前端在 panel 内把它和 `storyboards[]` 组合成 shot-centric 视图模型。
+**Architecture:** 延续 M2/M3a 的原则：HTTP 写操作只拿 ack / 同步结果，真正的状态来源统一以 `GET /projects/{id}` 聚合快照为准；前端不做乐观合并。M3b 前端先调用 `POST /render-draft` 获取后端建议的 prompt 和 reference images，在本地临时编辑后，再调用 `POST /render` 真正创建 job；未确认的草稿不落库。M3b 前端只支持“同一项目一次只发起一个镜头 render_shot job”，避免在 `GenerationPanel` 里再造并发调度器；批量继续生成、全量重渲、锁定全部最终版仍留给 M3c/M4。后端 `generationQueue` 在 M3b 继续保持 job-based 语义，前端在 panel 内把它和 `storyboards[]` 组合成 shot-centric 视图模型；但当前成功版本的图片和 `prompt_snapshot` 不能只靠 `generationQueue`，而要在选中镜头后懒加载 `GET /renders`，优先以当前版本为准。
 
 **Tech Stack:** Vue 3.5 `<script setup>` / TypeScript 5.7 strict / Pinia 2 / Axios 1.x / Vitest 2 / @vue/test-utils / 现有 `useJobPolling` / 现有 `useStageGate`。
 
@@ -33,7 +33,7 @@
 - `GenerationPanel.vue` 重写为真实可交互页：shot 列表、render draft、提示词编辑、参考图可删改、确认生成、历史版本、失败提示、锁定最终版
 - 新组件 `RenderVersionHistory.vue` / `RenderRetryBanner.vue`
 - `loadCurrent → findAndTrackActiveJobs` 扩展恢复 `render_shot` 任务
-- `SceneAssetsPanel.vue` 移除“绑定镜头 → 此场景”按钮和对应入口
+- `SceneAssetsPanel.vue` 调整文案与测试，明确“手动绑定镜头”仍是进入 `scenes_locked` 的现阶段前置；只有等后端取消该前提后，才删除这个入口
 - `frontend/scripts/smoke_m3b.sh` 与 README 的 M3b 说明
 
 **Excludes:**
@@ -49,6 +49,8 @@
 - `useStageGate.ts` 已有 `canRender` / `canLockShot` 布尔，M3b 不需要新 gate，只要补覆盖测试。
 - `workbench.ts` 已有 parse / generateCharacters / generateScenes / lockCharacter 的异步 job 追踪范式；M3b 复用它，不再新建单独 jobs store。
 - 后端 M3b 聚合的 `generationQueue` 保持 job-based，不会直接给“一行一个 shot”的完整列表；前端必须自己从 `storyboards[]` 生成左侧列表。
+- 当前后端仍要求“所有分镜都已绑定已锁定场景”后项目才能进入 `scenes_locked`；因此 M3b 前端本期不能删除 `SceneAssetsPanel` 的手动绑定入口，只能弱化它在渲染链路中的主路径角色。
+- 当前后端聚合里 `generationQueue` 只覆盖活跃 jobs；成功版本的稳定预览和 `prompt_snapshot` 必须通过 `GET /renders` 历史版本接口补齐。
 
 ## File Structure
 
@@ -75,9 +77,28 @@ frontend/src/components/generation/GenerationPanel.vue
 frontend/src/components/scene/SceneAssetsPanel.vue
 frontend/src/composables/useStageGate.ts
 frontend/tests/unit/useStageGate.spec.ts
-frontend/src/views/WorkbenchView.vue
 frontend/README.md
 ```
+
+## Recommended Execution Order
+
+为减少在 store / panel / 文档之间来回跳读，按下面顺序执行：
+
+1. `Task 0`：先核对后端 M3b 契约，缺字段就直接 block，不进入前端实现。
+2. `Task 1` + `Task 2`：先补类型与 API client，给后续 store / UI 提供稳定边界。
+3. `Task 3`：一次性完成 `workbench` 的 render draft、确认生成、历史版本缓存、in-flight job 恢复。
+4. `Task 4`：在 store 能力稳定后，再把 `GenerationPanel` 接成真实交互页。
+5. `Task 5`：最后补 `SceneAssetsPanel` 的过渡文案与测试，避免中途误删现有绑定入口。
+6. `Task 6`：收尾 README 与 smoke，确认联调说明和脚本与最终实现一致。
+
+**Recommended Commit Map:**
+
+- `Task 1`: types + stage gate
+- `Task 2`: shots API client
+- `Task 3`: render store workflow + reload recovery
+- `Task 4`: generation panel UI
+- `Task 5`: transitional scene binding copy
+- `Task 6`: docs + smoke
 
 ## Task 0: Contract Gate — 先核对后端 M3b 契约
 
@@ -92,9 +113,14 @@ frontend/README.md
 ```bash
 curl -s http://127.0.0.1:8000/api/v1/projects/<pid>/shots/<sid>/renders | jq .
 
-curl -s -X POST http://127.0.0.1:8000/api/v1/projects/<pid>/shots/<sid>/render-draft | jq .
+DRAFT="$(curl -s -X POST http://127.0.0.1:8000/api/v1/projects/<pid>/shots/<sid>/render-draft)"
+echo "$DRAFT" | jq .
 
-curl -s -X POST http://127.0.0.1:8000/api/v1/projects/<pid>/shots/<sid>/render | jq .
+PROMPT="$(echo "$DRAFT" | jq -r '.data.prompt')"
+REFS="$(echo "$DRAFT" | jq -c '.data.references | map({id,kind,source_id,name,image_url})')"
+curl -s -X POST http://127.0.0.1:8000/api/v1/projects/<pid>/shots/<sid>/render \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":$(jq -Rn --arg v "$PROMPT" '$v'),\"references\":$REFS}" | jq .
 ```
 
 预期：
@@ -141,6 +167,7 @@ curl -s http://127.0.0.1:8000/api/v1/projects/<pid> \
 - `storyboards[*]` 保持:
   - `status`
   - `current_render_id`
+- 当前后端若仍要求 `storyboards.scene_id` 全部已绑定已锁定场景才能进入 `scenes_locked`，前端本期必须保留现有手动绑定入口，不能按 M3b 名义直接删掉 `SceneAssetsPanel` 的 bind 按钮。
 
 - [ ] **Step 3: 不满足时先阻塞前端任务**
 
@@ -442,7 +469,7 @@ git add frontend/src/api/shots.ts frontend/tests/unit/shots.api.spec.ts
 git commit -m "feat(frontend): add m3b shots api client  (Task M3b-FE-2)"
 ```
 
-## Task 3: Workbench Store — render draft、确认生成、历史版本与恢复逻辑
+## Task 3: Workbench Store — render draft、确认生成、历史版本与刷新恢复
 
 **Files:**
 - Modify: `frontend/src/store/workbench.ts`
@@ -539,6 +566,35 @@ describe("workbench M3b render actions", () => {
     const rows = await store.fetchRenderVersions("SH1");
     expect(rows).toHaveLength(1);
     expect(store.renderVersionsFor("SH1")[0].id).toBe("R1");
+  });
+
+  it("findAndTrackActiveJobs(): 在 rendering 阶段接管 in-flight render_shot job", async () => {
+    vi.spyOn(projectsApi, "get").mockResolvedValue({
+      ...mkProject(),
+      stage: "镜头生成中",
+      stage_raw: "rendering"
+    } as any);
+    vi.spyOn(projectsApi, "getJobs").mockResolvedValue([
+      {
+        id: "RJ2",
+        kind: "render_shot",
+        status: "running",
+        progress: 45,
+        total: 100,
+        done: 45,
+        payload: { render_id: "R2" },
+        result: null,
+        error_msg: null,
+        target_id: "SH1",
+        created_at: "2026-04-22T00:00:00Z",
+        finished_at: null
+      } as any
+    ]);
+    const store = useWorkbenchStore();
+    await store.load("P1");
+    await store.findAndTrackActiveJobs();
+    expect(store.activeRenderJobId).toBe("RJ2");
+    expect(store.activeRenderShotId).toBe("SH1");
   });
 });
 ```
@@ -654,14 +710,30 @@ function markRenderFailed(msg: string) {
   renderError.value = msg;
 }
 
-// 在 load(id) 切换项目时清空 M3b 缓存，避免跨项目串历史版本/草稿
-renderDrafts.value = {};
-renderVersions.value = {};
+// 在 load(id) 成功切换到新项目后清空 M3b 缓存，避免跨项目串历史版本/草稿：
+// if (current.value?.id !== id) {
+//   renderDrafts.value = {};
+//   renderVersions.value = {};
+//   renderJob.value = null;
+//   renderError.value = null;
+// }
 ```
 
 新增 shot-centric 视图组合器：
 
 ```ts
+function mapJobStatusToRenderStatus(
+  status?: string | null,
+  shotStatus?: string | null
+): RenderStatus {
+  if (status === "queued" || status === "running") return "processing";
+  if (status === "failed" || status === "canceled") return "failed";
+  if (status === "succeeded") return "success";
+  if (shotStatus === "failed") return "failed";
+  if (shotStatus === "generating") return "processing";
+  return "success";
+}
+
 const renderShots = computed<RenderShotItem[]>(() => {
   return (current.value?.storyboards ?? []).map((shot) => {
     const queue = (current.value?.generationQueue ?? []).find(
@@ -679,29 +751,22 @@ const renderShots = computed<RenderShotItem[]>(() => {
       title: `镜头 ${String(shot.idx).padStart(2, "0")}`,
       summary: shot.title,
       shotStatus: queue?.shot_status ?? shot.status,
-      status:
-        queue?.status ??
-        (shot.status === "failed"
-          ? "warning"
-          : shot.status === "generating"
-            ? "processing"
-            : "success"),
+      status: mapJobStatusToRenderStatus(queue?.status, queue?.shot_status ?? shot.status),
       progress:
-        (isActive ? renderJob.value?.progress : undefined) ??
         queue?.progress ??
         (shot.status === "failed" ? 0 : shot.status === "generating" ? 1 : 100),
       currentRenderId: shot.current_render_id,
-      imageUrl: queue?.image_url ?? null,
+      imageUrl: queue?.image_url ?? null, // 仅作为 in-flight / queue 兜底，不作为成功版本唯一数据源
       versionNo: queue?.version_no ?? null,
       activeJobId: isActive ? activeRenderJobId.value : null,
       errorCode: queue?.error_code ?? null,
-      errorMsg: queue?.error_msg ?? (queue?.status === "warning" ? renderError.value : null)
+      errorMsg: queue?.error_msg ?? (shot.status === "failed" ? renderError.value : null)
     };
   });
 });
 ```
 
-扩展 `findAndTrackActiveJobs()`：**把下面分支加在现有 `else { ... }` 内部，复用同一个 `jobs / running / lastFailed` 闭包，不要加到外层作用域。**
+扩展 `findAndTrackActiveJobs()`：**把下面分支加在现有 `else { ... }` 内部，复用同一个 `jobs / running / lastFailed` 闭包，不要加到外层作用域。** 这一步属于本 task 的一部分，不再拆单独任务。
 
 ```ts
 if (stage === "scenes_locked" || stage === "rendering" || stage === "ready_for_export") {
@@ -718,6 +783,8 @@ if (stage === "scenes_locked" || stage === "rendering" || stage === "ready_for_e
   }
 }
 ```
+
+说明：当前 `frontend/src/views/WorkbenchView.vue` 已经是 `load()` 后统一调用 `findAndTrackActiveJobs()` 的形态，因此这里**不需要**再改 view 文件；`render_shot` 的恢复逻辑全部收敛在 `workbench.findAndTrackActiveJobs()` 即可。
 
 - [ ] **Step 4: 导出 store API**
 
@@ -741,7 +808,7 @@ renderHistoryLoadingShotId,
 renderError
 ```
 
-- [ ] **Step 5: 跑 store 测试**
+- [ ] **Step 5: 跑 store 测试（含恢复逻辑）**
 
 ```bash
 cd frontend
@@ -754,7 +821,7 @@ npm run test -- workbench.m3b.store.spec.ts
 
 ```bash
 git add frontend/src/store/workbench.ts frontend/tests/unit/workbench.m3b.store.spec.ts
-git commit -m "feat(frontend): add m3b render store workflow  (Task M3b-FE-3)"
+git commit -m "feat(frontend): add m3b render store workflow and recovery  (Task M3b-FE-3)"
 ```
 
 ## Task 4: GenerationPanel 交互化 + 历史版本 Modal
@@ -816,11 +883,15 @@ describe("GenerationPanel", () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const store = useWorkbenchStore();
-    vi.spyOn(store, "fetchRenderDraft").mockResolvedValue({
+    const draft = {
       shot_id: "SH1",
       prompt: "图片1中的宫门，图片2中的主角。",
       references: [{ id: "scene-1", kind: "scene", source_id: "SC1", name: "长安殿", image_url: "https://img/scene.png", reason: "命中文案" }]
+    };
+    vi.spyOn(store, "fetchRenderDraft").mockResolvedValue({
+      ...draft
     } as any);
+    vi.spyOn(store, "renderDraftFor").mockReturnValue(draft as any);
     vi.spyOn(store, "confirmRenderShot").mockResolvedValue("RJ1");
     vi.spyOn(store, "fetchRenderVersions").mockResolvedValue([]);
     store.current = {
@@ -981,10 +1052,15 @@ const selectedVersions = computed(() =>
 const currentVersion = computed(() =>
   selectedVersions.value.find((item) => item.is_current) ?? selectedVersions.value[0] ?? null
 );
+const previewImageUrl = computed(() =>
+  currentVersion.value?.image_url ??
+  selectedRenderShot.value?.imageUrl ??
+  null
+);
 const promptSnapshotText = computed(() =>
   currentVersion.value?.prompt_snapshot
     ? JSON.stringify(currentVersion.value.prompt_snapshot, null, 2)
-    : ""
+    : current.value?.generationNotes?.input ?? ""
 );
 const versionErrorCode = computed(() => currentVersion.value?.error_code ?? selectedRenderShot.value?.errorCode ?? null);
 const versionErrorMsg = computed(() => currentVersion.value?.error_msg ?? selectedRenderShot.value?.errorMsg ?? null);
@@ -1010,6 +1086,25 @@ function syncDraftFromStore() {
   draftPrompt.value = draft?.prompt ?? "";
   draftReferences.value = [...(draft?.references ?? [])];
 }
+
+watch(() => selectedRenderShot.value?.shotId, () => {
+  syncDraftFromStore();
+}, { immediate: true });
+
+watch(
+  () => selectedRenderShot.value?.shotId,
+  async (shotId) => {
+    if (!shotId) return;
+    if (!store.renderVersionsFor(shotId).length) {
+      try {
+        await store.fetchRenderVersions(shotId);
+      } catch {
+        // 保持静默，避免切换 shot 时连续弹错；显式点“查看历史版本”再展示错误
+      }
+    }
+  },
+  { immediate: true }
+);
 
 async function generateDraft() {
   if (!selectedRenderShot.value) return;
@@ -1040,6 +1135,14 @@ function removeReference(id: string) {
 
 async function confirmRender() {
   if (!selectedRenderShot.value) return;
+  if (!draftPrompt.value.trim()) {
+    toast.warning("请先补充镜头提示词");
+    return;
+  }
+  if (!draftReferences.value.length) {
+    toast.warning("至少保留 1 张参考图后才能确认生成");
+    return;
+  }
   try {
     await store.confirmRenderShot(selectedRenderShot.value.shotId, {
       prompt: draftPrompt.value,
@@ -1064,14 +1167,16 @@ async function confirmRender() {
 - prompt `<textarea v-model="draftPrompt">`
 - 参考图列表，支持删除单张引用 `removeReference(id)`；未要求在 M3b 做拖拽排序
 - `data-testid="confirm-render-btn"` 的“确认生成”按钮；提交 `draftPrompt + draftReferences`
+- 当 `draftPrompt.trim() === ""` 或 `draftReferences.length === 0` 时，确认生成按钮直接禁用，并给出本地提示，不要把“至少需要 1 张参考图”这类基本校验留给后端 409
 - 当 `activeRenderJobId` 已存在且 `activeRenderShotId !== selectedRenderShot?.shotId` 时，草稿按钮和确认生成按钮都要禁用，避免只靠 store 抛错
 - “查看历史版本”按钮
 - `RenderRetryBanner`，参数从 `versionErrorCode / versionErrorMsg / selectedRenderShot.shotStatus` 传入
-- 右侧真实 `<img :src="selectedRenderShot.imageUrl">` 预览；无图时显示 empty note
+- 右侧真实 `<img :src="previewImageUrl">` 预览；优先显示当前版本图，其次才回退到 queue 里的 in-flight/最近 render 图；无图时显示 empty note
 - 进度条：仅当 `activeRenderShotId === selectedRenderShot.shotId && renderJob` 时显示
 - “锁定最终版”按钮：调用 `store.lockShot(selectedRenderShot.shotId)`，并受 `flags.canLockShot` 门控
-- notes 区用 `<pre>{{ promptSnapshotText }}</pre>` 展示 `promptSnapshotText`；不要直接渲染对象，避免出现 `[object Object]`
+- notes 区用 `<pre>{{ promptSnapshotText }}</pre>` 展示 `promptSnapshotText`；有当前版本时显示其 `prompt_snapshot`，没有时才回退到聚合里的 `generationNotes.input`
 - `selectedRenderShot` 切换时，需要从 `store.renderDraftFor(shotId)` 同步本地临时表单；未生成过 draft 时展示 empty note
+- `selectedRenderShot` 切换时，需要自动懒加载一次该 shot 的 `GET /renders`，否则刷新后成功版本图片会因为 `generationQueue` 已清空而丢失
 
 - [ ] **Step 5: 跑 panel 测试**
 
@@ -1089,13 +1194,13 @@ git add frontend/src/components/generation/GenerationPanel.vue frontend/src/comp
 git commit -m "feat(frontend): build m3b generation panel  (Task M3b-FE-4)"
 ```
 
-## Task 5: SceneAssetsPanel 去掉手动绑定镜头入口
+## Task 5: SceneAssetsPanel 保留绑定入口并降级为过渡能力
 
 **Files:**
 - Modify: `frontend/src/components/scene/SceneAssetsPanel.vue`
 - Test: `frontend/tests/unit/scene.assets.panel.spec.ts`
 
-- [ ] **Step 1: 写移除绑定按钮的用例**
+- [ ] **Step 1: 写过渡期说明与入口保留的用例**
 
 创建 `frontend/tests/unit/scene.assets.panel.spec.ts`:
 
@@ -1107,7 +1212,7 @@ import SceneAssetsPanel from "@/components/scene/SceneAssetsPanel.vue";
 import { useWorkbenchStore } from "@/store/workbench";
 
 describe("SceneAssetsPanel", () => {
-  it("M3b 不再展示绑定镜头入口", () => {
+  it("M3b 仍保留绑定镜头入口，因为进入 scenes_locked 仍依赖 scene_id", () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const store = useWorkbenchStore();
@@ -1135,7 +1240,7 @@ describe("SceneAssetsPanel", () => {
       exportTasks: []
     } as any;
     const wrapper = mount(SceneAssetsPanel, { global: { plugins: [pinia] } });
-    expect(wrapper.text()).not.toContain("绑定镜头");
+    expect(wrapper.text()).toContain("绑定镜头");
   });
 });
 ```
@@ -1144,8 +1249,8 @@ describe("SceneAssetsPanel", () => {
 
 在 `frontend/src/components/scene/SceneAssetsPanel.vue` 中：
 
-- 移除 `handleBind()`、`currentShot`、`canBind` 等只服务于手动绑定的逻辑
-- 删除 “绑定镜头 XX → 此场景” 按钮
+- 保留 `handleBind()` 与 “绑定镜头 XX → 此场景” 按钮，因为当前后端推进到 `scenes_locked` 仍依赖 `storyboards.scene_id`
+- 调整该按钮周边 copy，明确它是“进入 M3b 渲染阶段前的过渡步骤”，而不是长期的镜头-场景主编辑入口
 - 保留 “编辑描述 / 重新生成参考图 / 锁定场景”
 - 右上角的“场景复用 X 镜头”统计可以继续保留为只读信息，但不再作为可点击操作入口
 
@@ -1162,85 +1267,10 @@ npm run test -- scene.assets.panel.spec.ts
 
 ```bash
 git add frontend/src/components/scene/SceneAssetsPanel.vue frontend/tests/unit/scene.assets.panel.spec.ts
-git commit -m "feat(frontend): remove manual shot scene binding entry  (Task M3b-FE-5)"
+git commit -m "feat(frontend): clarify transitional scene binding flow  (Task M3b-FE-5)"
 ```
 
-## Task 6: Workbench 恢复 in-flight render job
-
-**Files:**
-- Modify: `frontend/src/views/WorkbenchView.vue`
-- Modify: `frontend/src/store/workbench.ts`
-- Test: `frontend/tests/unit/workbench.m3b.store.spec.ts`
-
-- [ ] **Step 1: 给恢复逻辑补用例**
-
-在 `frontend/tests/unit/workbench.m3b.store.spec.ts` 追加：
-
-```ts
-it("findAndTrackActiveJobs(): 在 rendering 阶段接管 in-flight render_shot job", async () => {
-  vi.spyOn(projectsApi, "get").mockResolvedValue({
-    ...mkProject(),
-    stage: "镜头生成中",
-    stage_raw: "rendering"
-  } as any);
-  vi.spyOn(projectsApi, "getJobs").mockResolvedValue([
-    {
-      id: "RJ2",
-      kind: "render_shot",
-      status: "running",
-      progress: 45,
-      total: 100,
-      done: 45,
-      payload: { render_id: "R2" },
-      result: null,
-      error_msg: null,
-      target_id: "SH1",
-      created_at: "2026-04-22T00:00:00Z",
-      finished_at: null
-    } as any
-  ]);
-  const store = useWorkbenchStore();
-  await store.load("P1");
-  await store.findAndTrackActiveJobs();
-  expect(store.activeRenderJobId).toBe("RJ2");
-  expect(store.activeRenderShotId).toBe("SH1");
-});
-```
-
-- [ ] **Step 2: 保持 WorkbenchView 入口不分叉**
-
-`frontend/src/views/WorkbenchView.vue` 不要新增第二套恢复入口，只保留：
-
-```ts
-async function loadCurrent() {
-  try {
-    await store.load(String(route.params.id));
-    await store.findAndTrackActiveJobs();
-  } catch (e) {
-    // 保持现有错误处理
-  }
-}
-```
-
-说明：`render_shot` 的恢复逻辑全部放在 `workbench.findAndTrackActiveJobs()`，不要在 view 里加 if/else 特判。
-
-- [ ] **Step 3: 跑 store 测试**
-
-```bash
-cd frontend
-npm run test -- workbench.m3b.store.spec.ts
-```
-
-预期：通过。
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add frontend/src/store/workbench.ts frontend/src/views/WorkbenchView.vue frontend/tests/unit/workbench.m3b.store.spec.ts
-git commit -m "feat(frontend): restore in-flight render jobs on reload  (Task M3b-FE-6)"
-```
-
-## Task 7: README 与 Smoke
+## Task 6: README 与 Smoke
 
 **Files:**
 - Create: `frontend/scripts/smoke_m3b.sh`
@@ -1328,7 +1358,7 @@ M3b 前端新增：
 - `GenerationPanel` 先拿草稿、允许编辑 prompt / references、确认后生成
 - `RenderVersionHistory` 历史版本切换
 - 单镜头 `render_shot` job 轮询与刷新恢复
-- 场景详情移除手动“绑定镜头 → 此场景”入口
+- 场景详情暂时保留手动“绑定镜头 → 此场景”入口，作为进入 `scenes_locked` 的过渡能力
 
 联调前置：
 
@@ -1359,23 +1389,25 @@ npm run typecheck
 
 ```bash
 git add frontend/scripts/smoke_m3b.sh frontend/README.md frontend/tests/unit/shots.api.spec.ts frontend/tests/unit/workbench.m3b.store.spec.ts frontend/tests/unit/generation.panel.spec.ts frontend/tests/unit/useStageGate.spec.ts
-git commit -m "docs(frontend): add m3b render smoke and docs  (Task M3b-FE-7)"
+git commit -m "docs(frontend): add m3b render smoke and docs  (Task M3b-FE-6)"
 ```
 
 ## Self-Review Checklist
 
-- Spec coverage:
-  - `GenerationPanel` 真正可渲染、可查看历史版本、可切当前版本、可锁定最终版：Task 3 / Task 4
-  - `GenerationPanel` 先请求 draft，再允许用户临时编辑 prompt / references，确认后才真正创建 render job：Task 3 / Task 4
-  - 单镜头 render job 轮询：Task 3 / Task 4 / Task 6
-  - 场景详情页没有遗留“绑定镜头 → 此场景”按钮：Task 5
-  - 刷新后恢复 in-flight render job：Task 3 / Task 6
-  - 与后端 `GenerateJobAck` / `generationQueue` job-based 契约一致：Task 0 / Task 1 / Task 3
-  - `generationQueue[*]` 的 `render_shot` 项必须有 `target_id`；`GET /projects/{id}/jobs` 必须暴露 `target_id/payload/result/error_msg`，否则恢复逻辑直接 block：Task 0 / Task 3 / Task 6
-  - smoke / README：Task 7
+Spec coverage:
+- `GenerationPanel` 真正可渲染、可查看历史版本、可切当前版本、可锁定最终版：Task 3 / Task 4
+- `GenerationPanel` 先请求 draft，再允许用户临时编辑 prompt / references，确认后才真正创建 render job：Task 3 / Task 4
+- 单镜头 render job 轮询与刷新恢复：Task 3 / Task 4
+- 场景详情页仍保留“绑定镜头 → 此场景”按钮，并明确这是进入 `scenes_locked` 的过渡入口：Task 5
+- 刷新后恢复 in-flight render job：Task 3
+- 与后端 `GenerateJobAck` / `generationQueue` job-based 契约一致：Task 0 / Task 1 / Task 3
+- `generationQueue[*]` 的 `render_shot` 项必须有 `target_id`；`GET /projects/{id}/jobs` 必须暴露 `target_id/payload/result/error_msg`，否则恢复逻辑直接 block：Task 0 / Task 3
+- smoke / README：Task 6
 - `ProjectData.generationQueue` 仍是后端原始 job-based 结构，没有被前端类型误写成 shot-based 契约。
 - M3b 前端明确只允许同项目一个 `render_shot` job 在跑，未偷偷引入并发调度。
-- `GenerationPanel` 的 notes 区只展示当前版本 `prompt_snapshot`；没有历史版本时保持空态或展示当前 draft，不回退到全局 `generationNotes.input`。
+- `GenerationPanel` 的 notes 区优先展示当前版本 `prompt_snapshot`；没有历史版本时回退到聚合里的 `generationNotes.input`。
+- 成功版本预览不能只依赖 `generationQueue`；切换镜头后必须通过 `GET /renders` 补齐当前版本图片与 `prompt_snapshot`。
+- 切换项目时必须清空 render draft / history / in-flight job 相关缓存，避免串项目。
 - render draft 只保存在前端临时状态；刷新或离开页面后未确认草稿不恢复，不会误写入后端。
 - 未越界实现 M3c 的批量继续生成 / 全量重渲 / 锁定全部最终版。
 

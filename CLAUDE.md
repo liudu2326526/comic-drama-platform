@@ -111,6 +111,10 @@ Raise `ApiError(code, message, http_status)` from `app/api/errors.py` for contro
 
 - `tests/conftest.py` wires the test MySQL via Alembic (not `Base.metadata.create_all`) so schema drift is caught. It uses `NullPool` to avoid the `Future attached to a different loop` error when session-scoped engines cross pytest-asyncio event loops.
 - The `client` fixture rebinds `app.infra.db._engine` / `_session_factory` to the test engine, force-enables `celery_task_always_eager`, and **TRUNCATEs all tables after each test** for isolation.
+- Default integration tests must stay **offline and deterministic**: they must not depend on real Volcengine/OBS/Redis side effects, external network latency, or long async job chains just to prepare fixture data. In tests, force the ordinary integration path onto local/mock providers; reserve `AI_PROVIDER_MODE=real` only for explicitly named real-provider coverage such as `tests/integration/test_volcano_real_client.py`.
+- Do **not** call `/parse`, shot rendering, or other async workflow endpoints merely to manufacture rows for CRUD / stage-gate / reorder / cascade assertions. If the behavior under test is "delete project cascades", "storyboard edit is gated by stage", or "reorder rewrites idx", seed `Project` / `Job` / `StoryboardShot` / `Character` / `Scene` rows directly (or through shared test helpers) and assert only that behavior.
+- Split workflow coverage from behavior coverage: dedicated flow tests may exercise `/parse -> parse_novel -> gen_storyboard` or other job chains, but ordinary integration tests should prepare state directly and avoid coupling themselves to AI latency, retries, or provider availability.
+- When a test needs a later stage, update `Project.stage` through a focused test helper (for example `_force_stage`) rather than running unrelated pipeline steps. When a test needs child rows, insert those rows directly and `commit` / `refresh` as needed instead of relying on side-effect-heavy APIs.
 - Missing `session.refresh(obj)` after insert can cause `MissingGreenlet` when accessing server-defaulted columns (e.g. `created_at`). See `ProjectService.create` as the reference pattern.
 - HTTP stubs use `respx` (pinned); real Volcano integration tests live in `tests/integration/test_volcano_real_client.py` and require real `ARK_API_KEY`.
 
@@ -147,7 +151,7 @@ Matches `frontend/frontend-stack-and-ux.md`. Key conventions:
 
 ## Cross-cutting rules
 
-- The `AGENTS.md` at the repo root is intentionally empty. Do **not** assume agent instructions from it.
+- `AGENTS.md` and `CLAUDE.md` at the repo root are intentionally kept aligned for repo-level instructions. When adding or changing guidance here, update both files together.
 - When designing, prefer the MVP + mature-stack path in `docs/superpowers/specs/*`; stop asking for granular sign-offs on design sub-sections (project preference).
 - Commits follow a milestone-task prefix pattern: `feat(backend): <summary>  (Task N)` — see `backend/README.md` bottom for the reference log. Keep one commit per plan task.
 - Before claiming backend changes work, run the relevant `smoke_m*.sh`; they are end-to-end against a live stack. Tests alone do not cover the Celery + Volcano paths.

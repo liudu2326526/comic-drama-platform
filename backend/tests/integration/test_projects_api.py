@@ -57,6 +57,7 @@ async def test_delete_project(client):
 async def test_project_delete_cascade(client, db_session):
     from app.domain.models import Job, StoryboardShot
     from sqlalchemy import select
+    from tests.helpers import insert_storyboards, insert_job
 
     # 1. 创建项目
     resp = await client.post("/api/v1/projects", json={
@@ -65,12 +66,15 @@ async def test_project_delete_cascade(client, db_session):
     })
     project_id = resp.json()["data"]["id"]
 
-    # 2. 插入 Job 和 Storyboard
-    await client.post(f"/api/v1/projects/{project_id}/parse")
+    # 2. 插入 Job 和 Storyboard (直接使用 helper, 不走 /parse)
+    await insert_job(db_session, project_id, kind="parse_novel")
+    await insert_storyboards(db_session, project_id, count=2)
     
     # 验证数据已存在
     jobs = (await db_session.scalars(select(Job).where(Job.project_id == project_id))).all()
     assert len(jobs) > 0
+    shots = (await db_session.scalars(select(StoryboardShot).where(StoryboardShot.project_id == project_id))).all()
+    assert len(shots) == 2
     
     # 3. 删除项目
     await client.delete(f"/api/v1/projects/{project_id}")

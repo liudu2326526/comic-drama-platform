@@ -71,7 +71,7 @@ async def create_storyboard(
             "status": shot.status
         })
     except InvalidTransition as e:
-        raise ApiError(40301, str(e))
+        raise ApiError(40301, str(e), http_status=403)
 
 @router.post("/confirm")
 async def confirm_storyboards(
@@ -87,7 +87,7 @@ async def confirm_storyboards(
             "stage_raw": project.stage
         })
     except InvalidTransition as e:
-        raise ApiError(40301, str(e))
+        raise ApiError(40301, str(e), http_status=403)
     except ValueError as e:
         raise ApiError(40001, str(e))
 
@@ -111,7 +111,7 @@ async def update_storyboard(
             "status": shot.status
         })
     except InvalidTransition as e:
-        raise ApiError(40301, str(e))
+        raise ApiError(40301, str(e), http_status=403)
 
 @router.post("/reorder")
 async def reorder_storyboards(
@@ -125,7 +125,7 @@ async def reorder_storyboards(
         await db.commit()
         return ok({"reordered": True})
     except InvalidTransition as e:
-        raise ApiError(40301, str(e))
+        raise ApiError(40301, str(e), http_status=403)
 
 @router.delete("/{shot_id}")
 async def delete_storyboard(
@@ -139,4 +139,4 @@ async def delete_storyboard(
         await db.commit()
         return ok({"deleted": True})
     except InvalidTransition as e:
-        raise ApiError(40301, str(e))
+        raise ApiError(40301, str(e), http_status=403)

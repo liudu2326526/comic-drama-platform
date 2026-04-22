@@ -349,3 +349,31 @@ def select_shot_render_version(shot: object, render: object) -> None:
         raise InvalidTransition(current, "select_render", "只能选择 succeeded 的渲染版本")
     shot.current_render_id = render.id
     _set_storyboard_status(shot, StoryboardStatus.SUCCEEDED, "当前镜头状态不可切换到成功版本")
+
+
+def advance_to_rendering(project: Project) -> None:
+    current = ProjectStageRaw(project.stage)
+    if current == ProjectStageRaw.RENDERING:
+        return
+    if current != ProjectStageRaw.SCENES_LOCKED:
+        raise InvalidTransition(current.value, ProjectStageRaw.RENDERING.value, "只有 scenes_locked 可进入 rendering")
+    project.stage = ProjectStageRaw.RENDERING.value
+
+
+async def advance_to_ready_for_export_if_complete(session: AsyncSession, project: Project) -> bool:
+    from app.domain.models import StoryboardShot
+
+    current = ProjectStageRaw(project.stage)
+    if current == ProjectStageRaw.READY_FOR_EXPORT:
+        return True
+    if current != ProjectStageRaw.RENDERING:
+        return False
+    rows = (
+        await session.execute(
+            select(StoryboardShot.status).where(StoryboardShot.project_id == project.id)
+        )
+    ).scalars().all()
+    if rows and all(status in {"succeeded", "locked"} for status in rows):
+        project.stage = ProjectStageRaw.READY_FOR_EXPORT.value
+        return True
+    return False
