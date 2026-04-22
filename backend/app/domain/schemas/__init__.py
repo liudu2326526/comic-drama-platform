@@ -8,6 +8,21 @@ from .project import (
     ProjectSummary,
     ProjectUpdate,
 )
+from .storyboard import StoryboardUpdate, StoryboardReorderRequest
+from .job import JobSummary, JobDetail
+from .character import (
+    CharacterOut,
+    CharacterUpdate,
+    CharacterGenerateRequest,
+    CharacterLockRequest,
+    GenerateJobAck,
+)
+from .scene import (
+    SceneOut,
+    SceneUpdate,
+    SceneGenerateRequest,
+    SceneLockRequest,
+)
 
 __all__ = [
     "ProjectCreate",
@@ -18,4 +33,17 @@ __all__ = [
     "ProjectRollbackResponse",
     "ProjectListResponse",
     "InvalidatedSummary",
+    "StoryboardUpdate",
+    "StoryboardReorderRequest",
+    "JobSummary",
+    "JobDetail",
+    "CharacterOut",
+    "CharacterUpdate",
+    "CharacterGenerateRequest",
+    "CharacterLockRequest",
+    "GenerateJobAck",
+    "SceneOut",
+    "SceneUpdate",
+    "SceneGenerateRequest",
+    "SceneLockRequest",
 ]

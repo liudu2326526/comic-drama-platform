@@ -1,18 +1,21 @@
 from datetime import datetime
-
 from pydantic import BaseModel
+from typing import Optional
 
-
-class JobDetail(BaseModel):
+class JobSummary(BaseModel):
     id: str
     kind: str
     status: str
     progress: int
-    total: int | None
     done: int
-    result: dict | None
-    error_msg: str | None
+    total: Optional[int] = None
     created_at: datetime
-    finished_at: datetime | None
+    finished_at: Optional[datetime] = None
 
-    model_config = {"from_attributes": True}
+class JobDetail(JobSummary):
+    project_id: Optional[str] = None
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    payload: Optional[dict] = None
+    result: Optional[dict] = None
+    error_msg: Optional[str] = None

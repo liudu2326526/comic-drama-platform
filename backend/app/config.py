@@ -30,6 +30,45 @@ class Settings(BaseSettings):
 
     volcano_access_key: str = ""
     volcano_secret_key: str = ""
+    ark_api_key: str = ""
+    ai_provider_mode: str = "mock"
+
+    # 真实火山配置 (Task 1 新增)
+    ark_chat_model: str = "doubao-seed-2-0-pro-260215"
+    ark_image_model: str = "doubao-seedream-4-0-250828"
+    ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+
+    # 人像库(AK/SK HMAC)
+    volc_access_key_id: str = ""
+    volc_secret_access_key: str = ""
+    ark_project_name: str = "default"
+    volc_asset_host: str = "ark.cn-beijing.volcengineapi.com"
+    volc_asset_region: str = "cn-beijing"
+    volc_asset_service: str = "ark"
+    volc_asset_api_version: str = "2024-01-01"
+
+    # 资产下载
+    asset_download_timeout: int = 30       # seconds
+    asset_download_chunk: int = 65536
+
+    # 华为云 OBS
+    obs_ak: str = ""
+    obs_sk: str = ""
+    obs_endpoint: str = ""
+    obs_bucket: str = ""
+    obs_public_base_url: str = ""          # CDN 或自定义域名,必须公网可访问
+    obs_mock: bool = False                 # 仅测试/本地 mock 模式允许,real 模式必须 False
+
+    # 轮询
+    asset_wait_interval_sec: float = 3.0
+    asset_wait_timeout_sec: float = 120.0
+
+    # 调用重试(Chat/Image 粗粒度)
+    ai_retry_max: int = 3
+    ai_retry_base_sec: float = 4.0   # 指数退避 4/16/64
+
+    celery_task_always_eager: bool = False
+    backend_cors_origins: str = ""
 
     ai_worker_concurrency: int = 4
     video_worker_concurrency: int = 2

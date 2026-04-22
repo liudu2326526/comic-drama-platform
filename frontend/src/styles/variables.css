@@ -1,0 +1,27 @@
+/* frontend/src/styles/variables.css */
+:root {
+  /* 继承 demo 已有色板并转换为深色调 */
+  --bg-gradient: radial-gradient(120% 120% at 10% 0%, #1a1c2e 0%, #0b0d1a 55%, #05060d 100%);
+  --panel-bg: rgba(26, 28, 52, 0.72);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --accent: #8a8cff;
+  --accent-dim: rgba(138, 140, 255, 0.2);
+  --text-primary: #f0f1ff;
+  --text-muted: rgba(240, 241, 255, 0.68);
+  --text-faint: rgba(240, 241, 255, 0.42);
+
+  /* M1 新增(demo 未定义但本期要用) */
+  --danger: #f05a5a;
+  --success: #5cd6a9;
+  --warning: #f1a34b;
+
+  --radius-lg: 18px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+
+  --space-xs: 6px;
+  --space-sm: 10px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 40px;
+}

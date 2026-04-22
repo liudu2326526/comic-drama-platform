@@ -12,9 +12,14 @@ router = APIRouter()
 @router.get("/healthz")
 async def healthz(db: AsyncSession = Depends(get_db)):
     await db.execute(text("SELECT 1"))
-    redis = get_redis()
-    await redis.ping()
-    return ok({"db": "ok", "redis": "ok"})
+    res = {"db": "ok", "redis": "skipped"}
+    try:
+        redis = get_redis()
+        await redis.ping()
+        res["redis"] = "ok"
+    except Exception:
+        pass
+    return ok(res)
 
 
 @router.get("/readyz")

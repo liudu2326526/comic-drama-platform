@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import CHAR, DateTime, Enum, Index, JSON, SmallInteger, String, Text
+from sqlalchemy import CHAR, DateTime, Enum, ForeignKey, Index, JSON, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.models.base import Base, TimestampMixin
@@ -23,7 +23,11 @@ class Job(Base, TimestampMixin):
     __table_args__ = (Index("ix_jobs_project_id", "project_id"),)
 
     id: Mapped[str] = mapped_column(CHAR(26), primary_key=True, default=new_id)
-    project_id: Mapped[str | None] = mapped_column(CHAR(26), nullable=True)
+    project_id: Mapped[str | None] = mapped_column(
+        CHAR(26),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     kind: Mapped[str] = mapped_column(Enum(*JOB_KIND_VALUES, name="job_kind"), nullable=False)
     target_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     target_id: Mapped[str | None] = mapped_column(CHAR(26), nullable=True)

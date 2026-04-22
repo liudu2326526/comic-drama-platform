@@ -48,7 +48,11 @@ class ProjectService:
 
     async def update(self, project_id: str, payload: ProjectUpdate) -> Project:
         project = await self.get(project_id)
-        for field, value in payload.model_dump(exclude_unset=True).items():
+        # model_dump(exclude_unset=True) 只包含用户显式提交的字段;Task 2 的 validator
+        # 已经拒绝了显式 null,所以这里的 value 一定是合法非 None 值(除了 setup_params
+        # 本身字段类型允许 None,但 validator 已经阻断)。
+        updates = payload.model_dump(exclude_unset=True)
+        for field, value in updates.items():
             setattr(project, field, value)
         return project
 

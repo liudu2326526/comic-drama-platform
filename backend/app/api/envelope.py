@@ -10,6 +10,9 @@ class Envelope(BaseModel, Generic[T]):
     message: str = "ok"
     data: Any = None
 
+    @classmethod
+    def success(cls, data: Any = None):
+        return cls(code=0, message="ok", data=data)
 
 def ok(data: Any = None) -> dict:
     return {"code": 0, "message": "ok", "data": data}

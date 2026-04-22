@@ -13,13 +13,15 @@ dependencies = [
   "sqlalchemy[asyncio]==2.0.29",
   "asyncmy==0.2.9",
   "alembic==1.13.1",
-  "pydantic==2.6.4",
-  "pydantic-settings==2.2.1",
+  "pydantic>=2.9.0",
+  "pydantic-settings>=2.5.0",
   "celery==5.3.6",
   "redis==5.0.3",
   "python-ulid==2.2.0",
   "structlog==24.1.0",
   "httpx==0.27.0",
+  "openai==1.30.1",
+  "esdk-obs-python",  # 华为云 OBS SDK,用于资产持久化
 ]
 
 [project.optional-dependencies]
@@ -29,11 +31,37 @@ dev = [
   "pytest-cov==4.1.0",
   "ruff==0.3.4",
   "mypy==1.9.0",
+  "respx==0.21.1",  # httpx 打桩库,用于集成测试
 ]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
 exclude = ["tests*", "alembic*"]
+
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+explicit_package_bases = true
+mypy_path = "."
+files = ["app"]
+ignore_missing_imports = false
+warn_unused_ignores = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["celery.*", "celery", "kombu.*", "asyncmy.*", "ulid", "ulid.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# pydantic-settings 从环境变量读 required 字段,mypy 看不到,放开 call-arg
+module = ["app.config"]
+disable_error_code = ["call-arg"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_untyped_fields = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

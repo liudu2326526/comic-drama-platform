@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>漫剧生成平台 Demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./comic-drama-demo.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Comic Drama Platform</p>
+          <h1>漫剧生成工作台 Demo</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="status-pill">
+            <span class="dot"></span>
+            AI 生产链路已联通
+          </div>
+          <button class="ghost-btn">保存为产品原型</button>
+        </div>
+      </header>
+
+      <main class="workspace-layout">
+        <aside class="sidebar">
+          <div class="sidebar-head">
+            <p class="sidebar-title">项目列表</p>
+            <button class="icon-btn" aria-label="新建项目">+</button>
+          </div>
+
+          <label class="search-box">
+            <span>检索项目 / 角色 / 场景</span>
+            <input type="text" value="宫墙风云" />
+          </label>
+
+          <div class="project-list" id="projectList">
+            <button class="project-card active" data-project="0">
+              <span class="project-card-stage">分镜确认中</span>
+              <strong>宫墙风云 第 12 章</strong>
+              <small>14 个镜头 · 2 角色资产 · 4 场景资产</small>
+            </button>
+            <button class="project-card" data-project="1">
+              <span class="project-card-stage">角色已锁定</span>
+              <strong>星轨学院 序章</strong>
+              <small>9 个镜头 · 1 角色资产 · 3 场景资产</small>
+            </button>
+            <button class="project-card" data-project="2">
+              <span class="project-card-stage">待导出</span>
+              <strong>夜港异闻录 第 3 集</strong>
+              <small>18 个镜头 · 3 角色资产 · 5 场景资产</small>
+            </button>
+          </div>
+
+          <section class="sidebar-metrics">
+            <article>
+              <span>今日产出</span>
+              <strong>3 个项目</strong>
+            </article>
+            <article>
+              <span>镜头通过率</span>
+              <strong>91%</strong>
+            </article>
+            <article>
+              <span>导出队列</span>
+              <strong>2 个任务</strong>
+            </article>
+          </section>
+        </aside>
+
+        <section class="content-area">
+          <nav class="workflow-nav">
+            <button class="workflow-chip active">新建项目</button>
+            <button class="workflow-chip">分镜工作台</button>
+            <button class="workflow-chip">角色设定页</button>
+            <button class="workflow-chip">场景设定页</button>
+            <button class="workflow-chip">镜头生成页</button>
+            <button class="workflow-chip">导出</button>
+          </nav>
+
+          <section class="panel panel-hero">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">新建项目</p>
+                <h2 id="projectName">宫墙风云 第 12 章</h2>
+              </div>
+              <div class="head-actions">
+                <span class="tag warm">古风权谋</span>
+                <span class="tag">9:16 竖屏</span>
+                <span class="tag">建议镜头数 14</span>
+              </div>
+            </div>
+
+            <div class="project-setup">
+              <div class="story-input-card">
+                <label>小说内容输入</label>
+                <textarea id="storyInput">
+皇城夜雨，沈昭宁在冷宫废井旁发现一枚染血玉佩。她意识到失踪三年的太子旧案并未终结，而今夜的巡城火光与宫门异动，正把她一步步推回权力漩涡。她必须在天亮前找出玉佩真正的主人，否则自己将被当成旧案余党一并清除。
+                </textarea>
+                <div class="input-footer">
+                  <span>字数 1180</span>
+                  <span>已识别角色 4</span>
+                  <span>已识别场景 6</span>
+                </div>
+              </div>
+
+              <div class="setup-side">
+                <article class="mini-card">
+                  <span>项目参数</span>
+                  <ul>
+                    <li>时代风格：古风 / 写意漫感</li>
+                    <li>视觉基调：冷月青灰 + 朱砂点色</li>
+                    <li>输出目标：短视频剧情号</li>
+                  </ul>
+                </article>
+                <article class="mini-card gradient-card">
+                  <span>AI 解析摘要</span>
+                  <p id="projectSummary">
+                    当前文本适合生成“悬疑揭密 + 宫廷压迫感”节奏，建议前 4 个镜头快速立悬念，中段拉出追查关系，结尾保留追问。
+                  </p>
+                </article>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">分镜工作台</p>
+                <h2>建议镜头数已生成，可继续合并或拆分</h2>
+              </div>
+              <div class="head-actions">
+                <button class="ghost-btn">智能重排节奏</button>
+                <button class="primary-btn">确认 14 个镜头</button>
+              </div>
+            </div>
+
+            <div class="storyboard-layout">
+              <div class="storyboard-grid" id="storyboardGrid">
+                <article class="story-card active">
+                  <span>01</span>
+                  <strong>夜雨冷宫</strong>
+                  <p>暴雨中出现废井、残灯与独行主角，建立悬疑氛围。</p>
+                </article>
+                <article class="story-card">
+                  <span>02</span>
+                  <strong>玉佩现身</strong>
+                  <p>特写染血玉佩，镜头压近，抬高案件重量。</p>
+                </article>
+                <article class="story-card">
+                  <span>03</span>
+                  <strong>旧案回响</strong>
+                  <p>以回忆式旁白补足太子失踪案的背景信息。</p>
+                </article>
+                <article class="story-card">
+                  <span>04</span>
+                  <strong>巡城火光</strong>
+                  <p>宫墙外火光推进，形成外部危机与时间压力。</p>
+                </article>
+              </div>
+
+              <div class="storyboard-detail">
+                <div class="detail-title">
+                  <h3>当前镜头：01 夜雨冷宫</h3>
+                  <span>时长建议 3.5 秒</span>
+                </div>
+                <p>
+                  建议以高位俯视开场，冷宫外墙、细雨、青色月光形成压迫氛围，沈昭宁从画面右侧进入，视线落向废井。
+                </p>
+                <div class="detail-tags">
+                  <span>角色：沈昭宁</span>
+                  <span>场景：冷宫废院</span>
+                  <span>情绪：压抑 / 探查</span>
+                  <span>运镜：缓推近</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">角色设定页</p>
+                <h2>所有角色列表与角色详情子页</h2>
+              </div>
+              <div class="head-actions">
+                <span class="tag accent">主角已锁定</span>
+                <button class="ghost-btn">新增角色资产</button>
+              </div>
+            </div>
+
+            <div class="asset-browser">
+              <div class="asset-list-panel">
+                <div class="list-head">
+                  <strong>所有角色</strong>
+                  <span id="characterCount">3 个资产</span>
+                </div>
+                <div class="asset-list" id="characterList"></div>
+              </div>
+
+              <div class="asset-detail-panel">
+                <div class="subpage-head">
+                  <div>
+                    <p class="panel-kicker">角色详情子页</p>
+                    <h3 id="characterName">沈昭宁</h3>
+                  </div>
+                  <span class="tag accent" id="characterRole">主角</span>
+                </div>
+
+                <div class="asset-layout">
+                  <div class="reference-stage character-stage">
+                    <div class="reference-badge">角色参考图</div>
+                    <div class="silhouette" id="characterSilhouette"></div>
+                  </div>
+                  <div class="asset-info">
+                    <article class="asset-copy">
+                      <label>角色描述 string</label>
+                      <p id="characterString"></p>
+                    </article>
+                    <article class="asset-meta">
+                      <span>视频形象参考</span>
+                      <ul id="characterMeta"></ul>
+                    </article>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">场景设定页</p>
+                <h2>所有场景列表与场景详情子页</h2>
+              </div>
+              <div class="head-actions">
+                <span class="tag" id="sceneReuseTag">场景复用 4 镜头</span>
+                <button class="ghost-btn">新增场景资产</button>
+              </div>
+            </div>
+
+            <div class="asset-browser">
+              <div class="asset-list-panel">
+                <div class="list-head">
+                  <strong>所有场景</strong>
+                  <span id="sceneCount">3 个资产</span>
+                </div>
+                <div class="asset-list" id="sceneList"></div>
+              </div>
+
+              <div class="asset-detail-panel">
+                <div class="subpage-head">
+                  <div>
+                    <p class="panel-kicker">场景详情子页</p>
+                    <h3 id="sceneName">冷宫废院</h3>
+                  </div>
+                  <span class="tag" id="sceneLensUsage">复用 4 镜头</span>
+                </div>
+
+                <div class="asset-layout">
+                  <div class="reference-stage scene-stage" id="sceneStage">
+                    <div class="reference-badge">场景参考图</div>
+                    <div class="scene-layers">
+                      <span class="moon"></span>
+                      <span class="wall"></span>
+                      <span class="well"></span>
+                    </div>
+                  </div>
+                  <div class="asset-info">
+                    <article class="asset-copy">
+                      <label>场景描述 string</label>
+                      <p id="sceneString"></p>
+                    </article>
+                    <article class="asset-meta">
+                      <span>视频形象参考</span>
+                      <ul id="sceneMeta"></ul>
+                    </article>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">镜头生成页</p>
+                <h2>镜头生成队列与结果预览</h2>
+              </div>
+              <div class="head-actions">
+                <span class="tag success">11 / 14 已完成</span>
+                <button class="primary-btn">批量继续生成</button>
+              </div>
+            </div>
+
+            <div class="generation-layout">
+              <div class="generation-queue">
+                <article class="queue-item active">
+                  <div>
+                    <strong>镜头 01</strong>
+                    <p>夜雨冷宫开场</p>
+                  </div>
+                  <span class="status success">已完成</span>
+                </article>
+                <article class="queue-item">
+                  <div>
+                    <strong>镜头 02</strong>
+                    <p>玉佩血迹特写</p>
+                  </div>
+                  <span class="status success">已完成</span>
+                </article>
+                <article class="queue-item">
+                  <div>
+                    <strong>镜头 03</strong>
+                    <p>旧案回响闪回</p>
+                  </div>
+                  <span class="status processing">生成中</span>
+                </article>
+                <article class="queue-item">
+                  <div>
+                    <strong>镜头 04</strong>
+                    <p>巡城火光压近</p>
+                  </div>
+                  <span class="status warning">待重试</span>
+                </article>
+              </div>
+
+              <div class="generation-preview">
+                <div class="preview-frame">
+                  <div class="frame-caption">
+                    <span>Frame Preview</span>
+                    <strong>镜头 01 最终候选</strong>
+                  </div>
+                  <div class="frame-scene">
+                    <div class="preview-moon"></div>
+                    <div class="preview-wall"></div>
+                    <div class="preview-character"></div>
+                    <div class="preview-well"></div>
+                  </div>
+                </div>
+                <div class="preview-notes">
+                  <article>
+                    <span>使用输入</span>
+                    <p>角色描述 string + 场景描述 string + 分镜节奏说明</p>
+                  </article>
+                  <article>
+                    <span>生成建议</span>
+                    <p>保留雨幕层次，下一轮可提升角色面部受光与玉佩高光。</p>
+                  </article>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">导出</p>
+                <h2>导出短视频与任务状态</h2>
+              </div>
+              <div class="head-actions">
+                <span class="tag success">镜头完整性通过</span>
+                <button class="primary-btn">导出 MP4</button>
+              </div>
+            </div>
+
+            <div class="export-layout">
+              <div class="export-summary">
+                <article class="export-card">
+                  <span>导出配置</span>
+                  <ul>
+                    <li>比例：9:16</li>
+                    <li>分辨率：1080 x 1920</li>
+                    <li>单镜头时长：2.5s - 4s</li>
+                    <li>转场：溶解 + 黑场闪切</li>
+                  </ul>
+                </article>
+                <article class="export-card">
+                  <span>时间轴预览</span>
+                  <div class="timeline">
+                    <i style="width: 9%"></i>
+                    <i style="width: 7%"></i>
+                    <i style="width: 8%"></i>
+                    <i style="width: 10%"></i>
+                    <i style="width: 6%"></i>
+                    <i style="width: 12%"></i>
+                  </div>
+                  <p>预计成片时长：48 秒</p>
+                </article>
+              </div>
+
+              <div class="export-task">
+                <div class="task-head">
+                  <strong>导出任务队列</strong>
+                  <span>最近更新 18:12</span>
+                </div>
+                <article class="task-row">
+                  <div>
+                    <strong>宫墙风云 第 12 章 - 第一版</strong>
+                    <p>正在合成中，已完成封面、片头与 11 个镜头拼接</p>
+                  </div>
+                  <span class="status processing">68%</span>
+                </article>
+                <article class="task-row">
+                  <div>
+                    <strong>夜港异闻录 第 3 集 - 终版</strong>
+                    <p>导出完成，可下载 MP4 与封面图</p>
+                  </div>
+                  <span class="status success">完成</span>
+                </article>
+              </div>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="./comic-drama-demo.js"></script>
+  </body>
+</html>

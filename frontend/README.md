@@ -1,0 +1,88 @@
+# Comic Drama Frontend (M1)
+
+Vue 3 + Vite + TS + Pinia + Axios 工程骨架, 联调后端 M1 的项目 CRUD 与 rollback 端点。
+
+## 快速开始
+
+```bash
+# 0. 确保后端 M1 已启动在 http://127.0.0.1:8000
+# 1. 安装依赖
+cd frontend && npm install
+
+# 2. 日常启动 dev (代理 /api -> 127.0.0.1:8000)
+npm run dev
+# 访问 http://127.0.0.1:5173
+
+# 3. 冒烟 (从 repo 根目录执行; 脚本会自行启动/清理 dev server)
+# 注意: 冒烟不需要先执行 npm run dev; 若 5173 已被手动 dev 占用, 请先停止
+./frontend/scripts/smoke_m1.sh
+```
+
+## 测试
+
+```bash
+npm run test         # 纯逻辑单测 (error / useJobPolling / useStageGate)
+npm run typecheck    # vue-tsc 全量类型检查
+npm run build        # 构建产物到 dist/
+```
+
+## M1 已交付
+
+- 脚手架: Vite + Vue 3 + TS + Router + Pinia + Axios
+- 样式: 迁移自 `product/workbench-demo/`, 按 variables/global/panels 三分
+- `projects` 列表 / 详情 / 创建 / 删除联调 OK
+- `/rollback` 联调 OK, 含非法回退的 40301 toast 映射
+- `useJobPolling` / `useStageGate` 骨架 + 单测, 为 M2 留接口
+
+## M1 不包含
+
+- 分镜解析、角色/场景资产、镜头渲染、导出 — 见 M2+
+- 真实 AI job 轮询 — useJobPolling 目前只对着 mock fetcher 跑单测
+- 登录鉴权 / i18n / 主题切换 — MVP 范围外
+
+## M2 范围
+
+M2 在 M1 的项目 CRUD 之上打通了 AI 解析 + 分镜编辑链路。
+
+### 新增端点对接
+
+| 端点 | 组件 / Store |
+| --- | --- |
+| `POST /api/v1/projects/{id}/parse` | `ProjectCreateView`(开始拆分分镜按钮)/ `ProjectSetupPanel`(空态大按钮) |
+| `GET /api/v1/jobs/{id}` | `useJobPolling` → `ProjectSetupPanel` 真实轮询 |
+| `GET /api/v1/projects/{id}/storyboards` | 读路径仍由 `GET /projects/{id}` 聚合,M2 未单独使用 |
+| `POST /api/v1/projects/{id}/storyboards` | `StoryboardPanel` 新增镜头 |
+| `PATCH /api/v1/projects/{id}/storyboards/{shot_id}` | `StoryboardPanel` 编辑镜头 |
+| `DELETE /api/v1/projects/{id}/storyboards/{shot_id}` | `StoryboardPanel` 删除镜头 |
+| `POST /api/v1/projects/{id}/storyboards/reorder` | `StoryboardPanel` 上移/下移 |
+| `POST /api/v1/projects/{id}/storyboards/confirm` | `StoryboardPanel` 顶部"确认 N 镜头" |
+
+### 本地联调
+
+```bash
+# 1) 启动后端(务必 EAGER 模式,mock VolcanoClient 当场跑完)
+cd backend && CELERY_TASK_ALWAYS_EAGER=true uvicorn app.main:app --reload
+
+# 2) 启动前端
+cd frontend && pnpm dev
+
+# 3) 冒烟
+./frontend/scripts/smoke_m2.sh
+```
+
+### 阶段门(useStageGate)在 M2 的生效点
+
+- 分镜编辑窗口: `stage_raw ∈ {draft, storyboard_ready}`; 其他 stage 下所有写按钮灰化并悬浮提示 "当前阶段已锁定,如需修改请 回退阶段"
+- 点击被锁定的写按钮或后端返回 40301 时,顶栏 toast 附带 "回退阶段" 快捷入口,打开 `StageRollbackModal`
+
+### M2 不包含
+
+- 角色 / 场景资产生成、镜头渲染、导出(M3a+)
+- 分镜拖拽排序(使用 ↑ ↓ 按钮;拖拽进 M3a+)
+- 分镜 `duration_sec` 批量调整(M3c+)
+
+## 目录
+
+`src/api/` 请求封装 · `src/store/` Pinia · `src/composables/` 无状态逻辑 ·
+`src/views/` 页面 · `src/components/{layout,common,setup,storyboard,character,scene,generation,export,workflow}/` 业务组件 ·
+`src/styles/` 全局样式 · `tests/unit/` 单测

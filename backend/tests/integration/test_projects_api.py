@@ -54,6 +54,39 @@ async def test_delete_project(client):
 
 
 @pytest.mark.asyncio
+async def test_project_delete_cascade(client, db_session):
+    from app.domain.models import Job, StoryboardShot
+    from sqlalchemy import select
+
+    # 1. 创建项目
+    resp = await client.post("/api/v1/projects", json={
+        "name": "级联删除测试",
+        "story": "故事内容..."
+    })
+    project_id = resp.json()["data"]["id"]
+
+    # 2. 插入 Job 和 Storyboard
+    await client.post(f"/api/v1/projects/{project_id}/parse")
+    
+    # 验证数据已存在
+    jobs = (await db_session.scalars(select(Job).where(Job.project_id == project_id))).all()
+    assert len(jobs) > 0
+    
+    # 3. 删除项目
+    await client.delete(f"/api/v1/projects/{project_id}")
+    
+    # 4. 验证级联删除
+    # 注意: 级联删除是 DB 层面的, db_session 需要刷新或开启新事务
+    await db_session.commit() # 确保删除已提交
+    
+    jobs_after = (await db_session.scalars(select(Job).where(Job.project_id == project_id))).all()
+    assert len(jobs_after) == 0
+    
+    shots_after = (await db_session.scalars(select(StoryboardShot).where(StoryboardShot.project_id == project_id))).all()
+    assert len(shots_after) == 0
+
+
+@pytest.mark.asyncio
 async def test_get_project_404(client):
     r = await client.get("/api/v1/projects/01H0000000000000000000NOPE")
     assert r.status_code == 404
@@ -63,5 +96,39 @@ async def test_get_project_404(client):
 @pytest.mark.asyncio
 async def test_create_project_validation(client):
     r = await client.post("/api/v1/projects", json={"name": ""})  # 缺 story
+    assert r.status_code == 422
+    assert r.json()["code"] == 40001
+
+
+@pytest.mark.asyncio
+async def test_patch_explicit_null_rejected(client):
+    r = await client.post("/api/v1/projects", json={"name": "n", "story": "s"})
+    pid = r.json()["data"]["id"]
+    r = await client.patch(f"/api/v1/projects/{pid}", json={"name": None})
+    assert r.status_code == 422
+    assert r.json()["code"] == 40001
+
+
+@pytest.mark.asyncio
+async def test_patch_empty_payload_noop(client):
+    r = await client.post("/api/v1/projects", json={"name": "原名", "story": "s"})
+    pid = r.json()["data"]["id"]
+    r = await client.patch(f"/api/v1/projects/{pid}", json={})
+    assert r.status_code == 200
+    assert r.json()["data"]["name"] == "原名"
+
+
+@pytest.mark.asyncio
+async def test_create_blank_name_rejected(client):
+    r = await client.post("/api/v1/projects", json={"name": "   ", "story": "s"})
+    assert r.status_code == 422
+    assert r.json()["code"] == 40001
+
+
+@pytest.mark.asyncio
+async def test_create_setup_params_dict_rejected(client):
+    r = await client.post("/api/v1/projects", json={
+        "name": "n", "story": "s", "setup_params": {"era": "古风"},
+    })
     assert r.status_code == 422
     assert r.json()["code"] == 40001

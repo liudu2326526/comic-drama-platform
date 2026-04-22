@@ -3,8 +3,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.envelope import fail
-from app.domain.services.project_service import ProjectNotFound
-from app.pipeline.transitions import InvalidTransition
+
+CONTENT_FILTER = 42201
 
 
 class ApiError(Exception):
@@ -16,6 +16,8 @@ class ApiError(Exception):
 
 
 def register_handlers(app: FastAPI) -> None:
+    from app.domain.services.project_service import ProjectNotFound
+    from app.pipeline.transitions import InvalidTransition
 
     @app.exception_handler(ApiError)
     async def handle_api_error(_: Request, exc: ApiError):
@@ -34,8 +36,13 @@ def register_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation(_: Request, exc: RequestValidationError):
+        # Pydantic v2 exc.errors() 可能在 ctx["error"] 里包含 ValueError 实例,不可 JSON 序列化
+        errors = exc.errors()
+        for err in errors:
+            if "ctx" in err and "error" in err["ctx"]:
+                err["ctx"]["error"] = str(err["ctx"]["error"])
         return JSONResponse(
-            fail(40001, "参数校验失败", {"errors": exc.errors()}), status_code=422
+            fail(40001, "参数校验失败", {"errors": errors}), status_code=422
         )
 
     @app.exception_handler(Exception)

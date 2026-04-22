@@ -1,49 +1,104 @@
-# Comic Drama Backend — M1
+# Comic Drama Backend — M3a (Real Volcano & Assets)
 
-漫剧生成平台的后端骨架。本里程碑交付 FastAPI + SQLAlchemy + Alembic + Celery + Redis + MySQL 完整工程骨架、项目 CRUD、阶段回退(rollback)、健康检查与 jobs 表;所有 AI / 资产生成阶段在 M1 内均**未实现**,统一交给 M2 起的 pipeline 任务。
+漫剧生成平台的后端。M3a 里程碑交付了真实火山引擎(Volcengine Ark)接入、人像库(Asset Library)集成、华为云 OBS 存储以及角色/场景资产生成的完整链路。
 
 相关文档:
-- 后端设计:`docs/superpowers/specs/2026-04-20-backend-mvp-design.md`
-- 实施计划:`docs/superpowers/plans/2026-04-20-backend-m1-skeleton.md`
+- 后端设计: [2026-04-20-backend-mvp-design.md](file:///Users/macbook/Documents/trae_projects/comic-drama-platform/docs/superpowers/specs/2026-04-20-backend-mvp-design.md)
+- 实施计划: [2026-04-21-backend-m3a-real-volcano-and-assets.md](file:///Users/macbook/Documents/trae_projects/comic-drama-platform/docs/superpowers/plans/2026-04-21-backend-m3a-real-volcano-and-assets.md)
 
 ---
 
-## 目录结构
+## 目录结构 (M3a 新增)
 
 ```
 backend/
-├── pyproject.toml          setuptools build-backend + 依赖清单(锁死版本)
-├── alembic.ini             Alembic 配置,sqlalchemy.url 由 env.py 注入
-├── alembic/
-│   ├── env.py              async_engine_from_config + Base.metadata
-│   └── versions/
-│       └── 0001_init_projects_and_jobs.py
 ├── app/
-│   ├── main.py             FastAPI factory + lifespan 日志装配
-│   ├── config.py           pydantic-settings,MYSQL_*/REDIS_* 组件拼 URL
-│   ├── deps.py             get_db 依赖(session 自动 commit/rollback)
-│   ├── api/                薄路由层
-│   │   ├── envelope.py     {code, message, data} 信封 + ok/fail 工具
-│   │   ├── errors.py       全局异常 handler(ProjectNotFound / InvalidTransition / 校验 / 兜底)
-│   │   ├── health.py       /healthz /readyz
-│   │   └── projects.py     /api/v1/projects CRUD + /rollback
+│   ├── api/
+│   │   ├── characters.py      /projects/{id}/characters (Generate/List/Patch/Lock)
+│   │   └── scenes.py          /projects/{id}/scenes (Generate/List/Patch/Lock)
 │   ├── domain/
-│   │   ├── models/         Base + Project + Job ORM
-│   │   ├── schemas/        Pydantic 入参/出参
-│   │   └── services/       纯业务逻辑,不改 stage/status
-│   ├── pipeline/           阶段状态机(唯一写 project.stage 的地方)
-│   │   ├── states.py       ProjectStageRaw enum + STAGE_ZH + 合法性判定
-│   │   └── transitions.py  advance_stage / rollback_stage
-│   ├── tasks/              Celery 应用(M1 仅含 ai.ping)
-│   ├── infra/              db / redis / ulid 适配层
-│   └── utils/logger.py     structlog JSON 日志
-├── scripts/smoke_m1.sh     M1 冒烟脚本
-├── tests/
-│   ├── conftest.py         test_engine + client + db_session + TRUNCATE 隔离
-│   ├── unit/               test_ulid / test_pipeline_transitions
-│   └── integration/        test_projects_api / test_rollback_api
-└── .env.example            组件式环境变量模板
+│   │   ├── services/
+│   │   │   ├── character_service.py  人像库注册与锁定逻辑
+│   │   │   └── scene_service.py      场景绑定与统计逻辑
+│   ├── infra/
+│   │   ├── volcano_client.py  RealVolcanoClient 支持 Chat/Image 及指数退避重试
+│   │   ├── volcano_errors.py  火山 API 错误分类(RateLimit/ContentFilter/etc.)
+│   │   ├── volcano_asset_client.py 人像库(HMAC-SHA256 签名)客户端
+│   │   ├── obs_store.py       华为云 OBS 上传工具
+│   │   └── asset_store.py     资产持久化流程(Download -> Upload -> Cleanup)
+│   └── tasks/
+│       └── ai/
+│           ├── gen_character_asset.py  角色资产生成任务
+│           └── gen_scene_asset.py      场景资产生成任务
+├── scripts/
+│   └── smoke_m3a.sh           M3a 完整链路冒烟脚本
+└── tests/
+    ├── unit/
+    │   ├── test_volcano_errors.py
+    │   ├── test_volcano_asset_signature.py
+    │   └── test_asset_store.py
+    └── integration/
+        ├── test_volcano_real_client.py
+        └── test_character_concurrency.py (主角并发锁定测试)
 ```
+
+---
+
+## 快速开始 (M3a 配置)
+
+### 1. 配置 `.env`
+
+M3a 需要配置火山引擎和华为云 OBS 的真实凭据：
+
+```bash
+# 火山引擎 Ark AI
+ARK_API_KEY=your_api_key
+ARK_CHAT_MODEL=ep-xxx
+ARK_IMAGE_MODEL=cv-xxx
+AI_PROVIDER_MODE=real  # 必须设为 real 才会调用真实接口
+
+# 火山人像库 (Asset API)
+VOLC_ACCESS_KEY_ID=your_ak
+VOLC_SECRET_ACCESS_KEY=your_sk
+
+# 华为云 OBS
+OBS_AK=your_obs_ak
+OBS_SK=your_obs_sk
+OBS_ENDPOINT=obs.cn-beijing.myhuaweicloud.com
+OBS_BUCKET=your_bucket
+OBS_PUBLIC_BASE_URL=https://static.your-domain.com
+```
+
+### 2. 数据库迁移
+
+```bash
+alembic upgrade head
+```
+M3a 增加了 `character`/`scene`/`storyboard` 的复合索引以优化查询性能。
+
+### 3. 运行测试
+
+```bash
+# 统一使用 .venv 环境
+./.venv/bin/pytest tests/integration/test_volcano_real_client.py
+./.venv/bin/pytest tests/integration/test_character_concurrency.py
+```
+
+### 4. 冒烟验证
+
+```bash
+./scripts/smoke_m3a.sh <PROJECT_ID>
+```
+该脚本会执行：推进阶段 -> 生成角色 -> 锁定主角 -> 生成场景 -> 锁定场景 -> 绑定分镜 -> 详情聚合。
+
+---
+
+## M3a 核心变更
+
+- **异常分级**: 实现了 `VolcanoError` 体系，支持自动重试（针对 429/5xx）和业务错误识别（针对内容违规等）。
+- **人像库集成**: 实现了火山人像库的 HMAC-SHA256 签名算法，主角锁定后会自动入库以保证后续视频生成的一致性。
+- **并发安全**: 锁定主角操作使用 `SELECT FOR UPDATE` 确保一个项目在并发请求下只能有一个主角。
+- **存储优化**: 采用 `Temporary Download -> OBS Upload -> Cleanup` 流程，后端本地不保留长期资产文件。
 
 架构原则:`api/` 只做薄路由,`domain/services/` 不改状态字段,**所有 `project.stage` 写入必须经过 `pipeline/transitions.py`**。
 

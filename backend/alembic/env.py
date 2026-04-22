@@ -47,7 +47,15 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
-    asyncio.run(run_async_migrations())
+    # If a connection was passed via config attributes (e.g. from conftest.py run_sync)
+    connectable = config.attributes.get("connection", None)
+
+    if connectable is not None:
+        # Since we're in run_sync, 'connectable' is a synchronous Connection object
+        do_run_migrations(connectable)
+    else:
+        # CLI usage or other cases where no connection is provided
+        asyncio.run(run_async_migrations())
 
 
 if context.is_offline_mode():

@@ -1,22 +1,55 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from typing import Any
 
 
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
     story: str = Field(..., min_length=1)
     genre: str | None = Field(default=None, max_length=64)
-    ratio: str = Field(default="9:16", max_length=16)
-    # 与 spec §13 和 ProjectDetail.setupParams 一致:list[str]
+    ratio: str = Field(default="9:16", min_length=1, max_length=16)
+    # 与 spec §13 和 ProjectDetail.setupParams 一致:字符串数组,后端零转换直存直出
     setup_params: list[str] | None = None
+
+    @model_validator(mode="after")
+    def _reject_blank(self) -> "ProjectCreate":
+        if not self.name.strip():
+            raise ValueError("name 不能为空白")
+        return self
 
 
 class ProjectUpdate(BaseModel):
-    name: str | None = Field(default=None, max_length=128)
+    """
+    PATCH 语义:字段「可省略但不可显式 null」。
+
+    - 省略字段  → model_dump(exclude_unset=True) 里没有这个 key,service 层不 setattr
+    - 传字符串 → 按新值写入
+    - 传 null   → 422(Pydantic validator 拒绝)
+    """
+    name: str | None = Field(default=None, min_length=1, max_length=128)
     genre: str | None = Field(default=None, max_length=64)
-    ratio: str | None = Field(default=None, max_length=16)
+    ratio: str | None = Field(default=None, min_length=1, max_length=16)
     setup_params: list[str] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_explicit_null(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        for field in ("name", "genre", "ratio", "setup_params"):
+            if field in data and data[field] is None:
+                raise ValueError(f"{field} 不允许显式为 null;若不想修改请省略该字段")
+        return data
+
+
+    @model_validator(mode="after")
+    def _reject_blank(self) -> "ProjectUpdate":
+        if self.name is not None and not self.name.strip():
+            raise ValueError("name 不能为空白")
+        if self.ratio is not None and not self.ratio.strip():
+            raise ValueError("ratio 不能为空白")
+        return self
 
 
 class ProjectSummary(BaseModel):

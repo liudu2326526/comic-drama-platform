@@ -1,0 +1,30 @@
+from pydantic import BaseModel, Field, model_validator
+from typing import Optional, Any
+
+class StoryboardCreate(BaseModel):
+    title: str = Field(default="", max_length=128)
+    description: str = Field(default="", min_length=0)
+    detail: Optional[str] = None
+    duration_sec: Optional[float] = Field(default=None, ge=0, le=300)
+    tags: Optional[list[str]] = None
+    idx: Optional[int] = Field(default=None, ge=1, le=999)
+
+class StoryboardUpdate(BaseModel):
+    title: Optional[str] = Field(None, max_length=128)
+    description: Optional[str] = None
+    detail: Optional[str] = None
+    duration_sec: Optional[float] = Field(None, ge=0, le=300)
+    tags: Optional[list[str]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_explicit_null(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        for field in ("title", "description", "duration_sec", "tags"):
+            if field in data and data[field] is None:
+                raise ValueError(f"{field} 不允许显式为 null")
+        return data
+
+class StoryboardReorderRequest(BaseModel):
+    ordered_ids: list[str] = Field(..., min_length=1)
