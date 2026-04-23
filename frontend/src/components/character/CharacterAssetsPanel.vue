@@ -3,6 +3,7 @@
 import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
 import PanelSection from "@/components/common/PanelSection.vue";
+import PromptProfileCard from "@/components/common/PromptProfileCard.vue";
 import ProgressBar from "@/components/common/ProgressBar.vue";
 import CharacterEditorModal from "./CharacterEditorModal.vue";
 import StageRollbackModal from "@/components/workflow/StageRollbackModal.vue";
@@ -20,10 +21,11 @@ const {
   current,
   selectedCharacter,
   selectedCharacterId,
+  activeCharacterPromptProfileJobId,
   activeGenerateCharactersJobId,
   activeLockCharacterJobId,
   activeLockCharacterId,
-  activeRegenJobEntries,
+  characterPromptProfileError,
   generateCharactersError,
   lockCharacterError
 } = storeToRefs(store);
@@ -34,6 +36,44 @@ const editorOpen = ref(false);
 const rollbackOpen = ref(false);
 const busy = ref(false);
 const starting = ref(false);
+
+const characterPromptProfile = computed(
+  () => current.value?.characterPromptProfile ?? { draft: null, applied: null, status: "empty" as const }
+);
+
+function warnCharacterStageGate(message: string) {
+  toast.warning(message, {
+    action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
+  });
+}
+
+const { job: promptProfileJob } = useJobPolling(activeCharacterPromptProfileJobId, {
+  onProgress: () => void 0,
+  onSuccess: async () => {
+    try {
+      await store.reload();
+      store.markPromptProfileJobSucceeded("character");
+      toast.success("角色统一视觉设定已生成");
+    } catch (e) {
+      store.markPromptProfileJobFailed("character", (e as Error).message);
+    }
+  },
+  onError: (j, err) => {
+    const msg =
+      j?.error_msg ??
+      (err instanceof ApiError ? messageFor(err.code, err.message) : "生成失败");
+    store.markPromptProfileJobFailed("character", msg);
+    toast.error(msg);
+  }
+});
+
+const promptProfileJobLabel = computed(() => {
+  const j = promptProfileJob.value;
+  if (!j) return "正在生成角色统一视觉设定…";
+  return j.total && j.total > 0
+    ? `正在生成角色统一视觉设定… ${j.done}/${j.total}`
+    : `正在生成角色统一视觉设定… ${j.progress}%`;
+});
 
 // ---- 生成主 job 轮询(空态入口) ----
 const { job: generateJob } = useJobPolling(activeGenerateCharactersJobId, {
@@ -128,9 +168,7 @@ useJobPolling(activeCharacterRegenJobId, {
 // ---- 触发动作 ----
 async function handleGenerate() {
   if (!flags.value.canGenerateCharacters) {
-    toast.warning("当前阶段不允许生成角色", {
-      action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
-    });
+    warnCharacterStageGate("当前阶段不允许生成角色");
     return;
   }
   starting.value = true;
@@ -142,6 +180,83 @@ async function handleGenerate() {
     toast.error(msg);
   } finally {
     starting.value = false;
+  }
+}
+
+async function handleGeneratePromptProfile() {
+  if (!flags.value.canEditCharacters) {
+    warnCharacterStageGate("当前阶段不允许修改角色统一视觉设定");
+    return;
+  }
+  try {
+    await store.generatePromptProfile("character");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "触发失败");
+  }
+}
+
+async function handleSavePromptProfile(prompt: string) {
+  if (!flags.value.canEditCharacters) {
+    warnCharacterStageGate("当前阶段不允许修改角色统一视觉设定");
+    return;
+  }
+  try {
+    await store.savePromptProfileDraft("character", prompt);
+    toast.success("角色统一视觉设定草稿已保存");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "保存失败");
+  }
+}
+
+async function handleClearPromptProfile() {
+  if (!flags.value.canEditCharacters) {
+    warnCharacterStageGate("当前阶段不允许修改角色统一视觉设定");
+    return;
+  }
+  try {
+    await store.clearPromptProfileDraft("character");
+    toast.success("角色统一视觉设定草稿已清空");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "清空失败");
+  }
+}
+
+async function handleRestorePromptProfile() {
+  if (!flags.value.canEditCharacters) {
+    warnCharacterStageGate("当前阶段不允许修改角色统一视觉设定");
+    return;
+  }
+  try {
+    await store.restoreAppliedPromptProfileDraft("character");
+    toast.success("已恢复到已应用版本");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "恢复失败");
+  }
+}
+
+async function handleConfirmPromptProfile() {
+  if (!flags.value.canEditCharacters) {
+    warnCharacterStageGate("当前阶段不允许确认角色统一视觉设定");
+    return;
+  }
+  try {
+    await store.confirmPromptProfileAndGenerate("character");
+    toast.info("已按统一视觉设定提交角色生成");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "触发失败");
+  }
+}
+
+async function handleSkipPromptProfile() {
+  if (!flags.value.canGenerateCharacters) {
+    warnCharacterStageGate("当前阶段不允许生成角色");
+    return;
+  }
+  try {
+    await store.skipPromptProfileAndGenerate("character");
+    toast.info("已跳过统一视觉设定，直接生成角色");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "触发失败");
   }
 }
 
@@ -265,6 +380,23 @@ const selectedRegenProgress = computed(() =>
     <template #actions>
       <button class="ghost-btn" type="button" disabled>新增角色资产</button>
     </template>
+
+    <PromptProfileCard
+      title="角色统一视觉设定"
+      description="先锁定项目级角色画风、脸型气质、服装材质和镜头语言，再生成角色参考图会更稳定。"
+      :profile="characterPromptProfile"
+      :editable="flags.canEditCharacters"
+      :generating="!!activeCharacterPromptProfileJobId"
+      :generate-job-label="promptProfileJobLabel"
+      :generate-error="characterPromptProfileError"
+      :submitting="starting || busy || !!activeGenerateCharactersJobId"
+      @generate="handleGeneratePromptProfile"
+      @save="handleSavePromptProfile"
+      @clear="handleClearPromptProfile"
+      @restore="handleRestorePromptProfile"
+      @confirm="handleConfirmPromptProfile"
+      @skip="handleSkipPromptProfile"
+    />
 
     <!-- 生成主 job 进度 -->
     <div v-if="activeGenerateCharactersJobId" class="gen-banner running">

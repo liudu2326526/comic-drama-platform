@@ -1,6 +1,7 @@
 /* frontend/src/types/index.ts */
 import type {
   CharacterRoleType,
+  PromptProfileState,
   ProjectStageRaw,
   ProjectStageZh,
   SceneThemeRaw,
@@ -10,7 +11,7 @@ import type {
 export type RenderStatus = "success" | "processing" | "warning" | "failed";
 
 /** 分镜卡片展示对象,对齐后端聚合接口与 StoryboardDetail(idx/duration_sec/scene_id 等字段)。 */
-export interface StoryboardShot extends StoryboardDetail {}
+export type StoryboardShot = StoryboardDetail;
 
 export interface CharacterAsset {
   id: string;
@@ -93,6 +94,8 @@ export interface ProjectData {
   storyboards: StoryboardShot[];
   characters: CharacterAsset[];
   scenes: SceneAsset[];
+  characterPromptProfile: PromptProfileState;
+  scenePromptProfile: PromptProfileState;
   generationProgress: string;
   generationNotes: { input: string; suggestion: string };
   generationQueue: RenderQueueItem[];

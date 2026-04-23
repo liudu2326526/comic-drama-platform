@@ -93,6 +93,20 @@ export interface ProjectRollbackResponse {
   };
 }
 
+export type PromptProfileKind = "character" | "scene";
+export type PromptProfileStatus = "empty" | "draft_only" | "applied" | "dirty";
+
+export interface PromptProfilePayload {
+  prompt: string;
+  source: "ai" | "manual";
+}
+
+export interface PromptProfileState {
+  draft: PromptProfilePayload | null;
+  applied: PromptProfilePayload | null;
+  status: PromptProfileStatus;
+}
+
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 
 export interface JobState {
@@ -298,9 +312,7 @@ export interface SceneGenerateRequest {
   template_whitelist?: string[]; // 空 = 不限;后端 M3a 暂不消费,保留给后续模板筛选
 }
 
-export interface SceneLockRequest {
-  // 占位,后端目前无字段,但保留接口形状以便后续扩展
-}
+export type SceneLockRequest = Record<string, never>;
 
 export interface SceneLockResponse extends GenerateJobAck {
   ack: "async";
