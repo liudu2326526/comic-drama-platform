@@ -3,10 +3,11 @@ import logging
 from app.infra.db import get_session_factory
 from app.infra.volcano_client import get_volcano_client
 from app.infra.asset_store import persist_generated_asset
-from app.domain.models import Scene, Job
+from app.domain.models import Job, Project, Scene
 from app.pipeline.transitions import update_job_progress
 from app.tasks.celery_app import celery_app
 from app.config import get_settings
+from app.tasks.ai.prompt_builders import build_scene_asset_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +25,19 @@ async def _gen_scene_asset_task(scene_id: str, job_id: str):
                 await session.commit()
                 return
 
+            project = await session.get(Project, scene.project_id)
+            if not project:
+                logger.error(f"Project {scene.project_id} not found")
+                await update_job_progress(session, job_id, status="failed", error_msg="Project not found")
+                await session.commit()
+                return
+
             settings = get_settings()
             client = get_volcano_client()
             
             # 1. 调用 AI 生成图片
             # 构造 prompt
-            prompt = f"场景名称：{scene.name}\n场景主题：{scene.theme}\n场景简介：{scene.summary}\n场景详述：{scene.description}\n\n请生成该场景的写实环境图。"
+            prompt = build_scene_asset_prompt(project, scene)
             
             gen_resp = await client.image_generations(
                 model=settings.ark_image_model,

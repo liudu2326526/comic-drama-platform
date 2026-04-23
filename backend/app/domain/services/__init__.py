@@ -7,6 +7,7 @@ from .scene_service import SceneService
 from .shot_draft_service import ShotDraftService
 from .shot_render_service import ShotRenderService
 from .shot_video_service import ShotVideoService
+from .prompt_profile_service import PromptProfileService
 
 __all__ = [
     "ProjectService",
@@ -19,4 +20,5 @@ __all__ = [
     "ShotDraftService",
     "ShotRenderService",
     "ShotVideoService",
+    "PromptProfileService",
 ]

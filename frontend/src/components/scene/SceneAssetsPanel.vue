@@ -3,6 +3,7 @@
 import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
 import PanelSection from "@/components/common/PanelSection.vue";
+import PromptProfileCard from "@/components/common/PromptProfileCard.vue";
 import ProgressBar from "@/components/common/ProgressBar.vue";
 import SceneEditorModal from "./SceneEditorModal.vue";
 import StageRollbackModal from "@/components/workflow/StageRollbackModal.vue";
@@ -19,7 +20,9 @@ const {
   current,
   selectedScene,
   selectedSceneId,
+  activeScenePromptProfileJobId,
   activeGenerateScenesJobId,
+  scenePromptProfileError,
   generateScenesError,
 } = storeToRefs(store);
 const { flags } = useStageGate();
@@ -29,6 +32,44 @@ const editorOpen = ref(false);
 const rollbackOpen = ref(false);
 const busy = ref(false);
 const starting = ref(false);
+
+const scenePromptProfile = computed(
+  () => current.value?.scenePromptProfile ?? { draft: null, applied: null, status: "empty" as const }
+);
+
+function warnSceneStageGate(message: string) {
+  toast.warning(message, {
+    action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
+  });
+}
+
+const { job: promptProfileJob } = useJobPolling(activeScenePromptProfileJobId, {
+  onProgress: () => void 0,
+  onSuccess: async () => {
+    try {
+      await store.reload();
+      store.markPromptProfileJobSucceeded("scene");
+      toast.success("场景统一视觉设定已生成");
+    } catch (e) {
+      store.markPromptProfileJobFailed("scene", (e as Error).message);
+    }
+  },
+  onError: (j, err) => {
+    const msg =
+      j?.error_msg ??
+      (err instanceof ApiError ? messageFor(err.code, err.message) : "生成失败");
+    store.markPromptProfileJobFailed("scene", msg);
+    toast.error(msg);
+  }
+});
+
+const promptProfileJobLabel = computed(() => {
+  const j = promptProfileJob.value;
+  if (!j) return "正在生成场景统一视觉设定…";
+  return j.total && j.total > 0
+    ? `正在生成场景统一视觉设定… ${j.done}/${j.total}`
+    : `正在生成场景统一视觉设定… ${j.progress}%`;
+});
 
 // ---- 主 job 轮询 ----
 const { job: generateJob } = useJobPolling(activeGenerateScenesJobId, {
@@ -87,9 +128,7 @@ useJobPolling(activeSceneRegenJobId, {
 // ---- 动作 ----
 async function handleGenerate() {
   if (!flags.value.canGenerateScenes) {
-    toast.warning("当前阶段不允许生成场景", {
-      action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
-    });
+    warnSceneStageGate("当前阶段不允许生成场景");
     return;
   }
   starting.value = true;
@@ -101,6 +140,83 @@ async function handleGenerate() {
     toast.error(msg);
   } finally {
     starting.value = false;
+  }
+}
+
+async function handleGeneratePromptProfile() {
+  if (!flags.value.canEditScenes) {
+    warnSceneStageGate("当前阶段不允许修改场景统一视觉设定");
+    return;
+  }
+  try {
+    await store.generatePromptProfile("scene");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "触发失败");
+  }
+}
+
+async function handleSavePromptProfile(prompt: string) {
+  if (!flags.value.canEditScenes) {
+    warnSceneStageGate("当前阶段不允许修改场景统一视觉设定");
+    return;
+  }
+  try {
+    await store.savePromptProfileDraft("scene", prompt);
+    toast.success("场景统一视觉设定草稿已保存");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "保存失败");
+  }
+}
+
+async function handleClearPromptProfile() {
+  if (!flags.value.canEditScenes) {
+    warnSceneStageGate("当前阶段不允许修改场景统一视觉设定");
+    return;
+  }
+  try {
+    await store.clearPromptProfileDraft("scene");
+    toast.success("场景统一视觉设定草稿已清空");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "清空失败");
+  }
+}
+
+async function handleRestorePromptProfile() {
+  if (!flags.value.canEditScenes) {
+    warnSceneStageGate("当前阶段不允许修改场景统一视觉设定");
+    return;
+  }
+  try {
+    await store.restoreAppliedPromptProfileDraft("scene");
+    toast.success("已恢复到已应用版本");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "恢复失败");
+  }
+}
+
+async function handleConfirmPromptProfile() {
+  if (!flags.value.canEditScenes) {
+    warnSceneStageGate("当前阶段不允许确认场景统一视觉设定");
+    return;
+  }
+  try {
+    await store.confirmPromptProfileAndGenerate("scene");
+    toast.info("已按统一视觉设定提交场景生成");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "触发失败");
+  }
+}
+
+async function handleSkipPromptProfile() {
+  if (!flags.value.canGenerateScenes) {
+    warnSceneStageGate("当前阶段不允许生成场景");
+    return;
+  }
+  try {
+    await store.skipPromptProfileAndGenerate("scene");
+    toast.info("已跳过统一视觉设定，直接生成场景");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "触发失败");
   }
 }
 
@@ -208,6 +324,23 @@ const selectedRegenProgress = computed(() =>
         确认进入镜头生成
       </button>
     </template>
+
+    <PromptProfileCard
+      title="场景统一视觉设定"
+      description="先统一时代、空间锚点、色彩光影和镜头调度，再生成场景母版会更利于后续分镜复用。"
+      :profile="scenePromptProfile"
+      :editable="flags.canEditScenes"
+      :generating="!!activeScenePromptProfileJobId"
+      :generate-job-label="promptProfileJobLabel"
+      :generate-error="scenePromptProfileError"
+      :submitting="starting || busy || !!activeGenerateScenesJobId"
+      @generate="handleGeneratePromptProfile"
+      @save="handleSavePromptProfile"
+      @clear="handleClearPromptProfile"
+      @restore="handleRestorePromptProfile"
+      @confirm="handleConfirmPromptProfile"
+      @skip="handleSkipPromptProfile"
+    />
 
     <div v-if="activeGenerateScenesJobId" class="gen-banner running">
       <div class="gen-head">

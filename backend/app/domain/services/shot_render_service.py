@@ -17,6 +17,7 @@ from app.pipeline.transitions import (
     mark_shot_locked,
     select_shot_render_version,
 )
+from app.tasks.ai.prompt_builders import build_storyboard_render_draft_prompt
 
 
 RENDERABLE_STAGES = {
@@ -61,7 +62,7 @@ class ShotRenderService:
             )
         ).scalars().all()
         references = self._select_references(shot, scenes, characters)
-        prompt = self._build_draft_prompt(shot, references)
+        prompt = build_storyboard_render_draft_prompt(project, shot, references)
         return {"shot_id": shot.id, "prompt": prompt, "references": references}
 
     async def create_render_version(
@@ -123,19 +124,6 @@ class ShotRenderService:
 
     def _select_references(self, shot: StoryboardShot, scenes: list[Scene], characters: list[Character]) -> list[dict]:
         return build_reference_candidates(shot, scenes, characters, self._asset_ref)
-
-    def _build_draft_prompt(self, shot: StoryboardShot, references: list[dict]) -> str:
-        ref_descriptions = []
-        for i, ref in enumerate(references):
-            kind_zh = "主场景" if ref["kind"] == "scene" else "角色形象"
-            ref_descriptions.append(f"图片{i+1}中的{kind_zh}({ref['name']})")
-
-        header = f"镜头标题：{shot.title}\n镜头描述：{shot.description}\n镜头细节：{shot.detail or ''}\n"
-        if not ref_descriptions:
-            return f"{header}生成一张竖屏漫剧静帧，电影感构图，主体清晰。"
-
-        ref_prompt = "，".join(ref_descriptions)
-        return f"{header}请参考{ref_prompt}，生成一张竖屏漫剧静帧，电影感构图，主体清晰。"
 
     async def list_renders(self, project_id: str, shot_id: str) -> list[ShotRender]:
         await self._get_shot(project_id, shot_id)

@@ -3,10 +3,11 @@ import logging
 from app.infra.db import get_session_factory
 from app.infra.volcano_client import get_volcano_client
 from app.infra.asset_store import persist_generated_asset
-from app.domain.models import Character, Job
+from app.domain.models import Character, Job, Project
 from app.pipeline.transitions import update_job_progress
 from app.tasks.celery_app import celery_app
 from app.config import get_settings
+from app.tasks.ai.prompt_builders import build_character_asset_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +25,19 @@ async def _gen_character_asset_task(character_id: str, job_id: str):
                 await session.commit()
                 return
 
+            project = await session.get(Project, char.project_id)
+            if not project:
+                logger.error(f"Project {char.project_id} not found")
+                await update_job_progress(session, job_id, status="failed", error_msg="Project not found")
+                await session.commit()
+                return
+
             settings = get_settings()
             client = get_volcano_client()
             
             # 1. 调用 AI 生成图片
             # 构造 prompt
-            prompt = f"角色名称：{char.name}\n角色简介：{char.summary}\n角色详述：{char.description}\n\n请生成该角色的写实人像，背景简洁。"
+            prompt = build_character_asset_prompt(project, char)
             
             # 使用火山文生图接口
             gen_resp = await client.image_generations(

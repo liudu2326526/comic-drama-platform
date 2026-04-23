@@ -1,0 +1,66 @@
+import asyncio
+import logging
+
+from app.config import get_settings
+from app.domain.models import Job, Project
+from app.infra.db import get_session_factory
+from app.infra.volcano_client import get_volcano_client
+from app.pipeline.transitions import update_job_progress
+from app.tasks.celery_app import celery_app
+from app.utils.json_utils import extract_json
+
+logger = logging.getLogger(__name__)
+
+
+async def _run(project_id: str, job_id: str) -> None:
+    session_factory = get_session_factory()
+    settings = get_settings()
+    async with session_factory() as session:
+        try:
+            await update_job_progress(session, job_id, status="running", progress=10)
+            await session.commit()
+
+            project = await session.get(Project, project_id)
+            if project is None:
+                await update_job_progress(session, job_id, status="failed", error_msg="Project not found")
+                await session.commit()
+                return
+
+            system_prompt = (
+                "你是漫剧项目的视觉设定师。"
+                "请只返回 JSON 对象，字段固定为 prompt。"
+                "prompt 必须是一段中文自然语言，显式覆盖以下 7 个维度："
+                "world_era、visual_style、palette_lighting、lens_language、"
+                "character_rules、scene_rules、negative_rules。"
+                "不要返回 markdown，不要返回解释，不要省略字段语义。"
+            )
+            user_prompt = (
+                "请基于项目故事概述、setup_params、项目摘要和整体风格，"
+                "生成一段适合所有场景母版图复用的统一视觉设定。"
+            )
+            response = await get_volcano_client().chat_completions(
+                model=settings.ark_chat_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            content = response.choices[0].message.content
+            payload = {"prompt": extract_json(content)["prompt"].strip(), "source": "ai"}
+            project.scene_prompt_profile_draft = payload
+
+            job = await session.get(Job, job_id)
+            if job is not None:
+                job.result = {"profile_kind": "scene"}
+
+            await update_job_progress(session, job_id, status="succeeded", progress=100)
+            await session.commit()
+        except Exception as exc:
+            logger.exception("generate scene prompt profile failed: %s", exc)
+            await update_job_progress(session, job_id, status="failed", error_msg=str(exc))
+            await session.commit()
+
+
+@celery_app.task(name="ai.gen_scene_prompt_profile", queue="ai")
+def gen_scene_prompt_profile(project_id: str, job_id: str) -> None:
+    asyncio.run(_run(project_id, job_id))

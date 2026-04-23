@@ -93,6 +93,20 @@ export interface ProjectRollbackResponse {
   };
 }
 
+export type PromptProfileKind = "character" | "scene";
+export type PromptProfileStatus = "empty" | "draft_only" | "applied" | "dirty";
+
+export interface PromptProfilePayload {
+  prompt: string;
+  source: "ai" | "manual";
+}
+
+export interface PromptProfileState {
+  draft: PromptProfilePayload | null;
+  applied: PromptProfilePayload | null;
+  status: PromptProfileStatus;
+}
+
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 
 export interface JobResultPayload {

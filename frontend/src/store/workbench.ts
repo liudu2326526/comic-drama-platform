@@ -4,6 +4,7 @@ import { computed, ref } from "vue";
 import { projectsApi } from "@/api/projects";
 import { storyboardsApi } from "@/api/storyboards";
 import { charactersApi } from "@/api/characters";
+import { promptProfilesApi } from "@/api/promptProfiles";
 import { scenesApi } from "@/api/scenes";
 import { shotsApi } from "@/api/shots";
 import type { ProjectData, RenderShotItem, RenderStatus } from "@/types";
@@ -19,6 +20,8 @@ import type {
   SceneGenerateRequest,
   SceneUpdate,
   JobState,
+  PromptProfileKind,
+  PromptProfileState,
   RenderDraftRead,
   RenderSubmitRequest,
   RenderVersionRead,
@@ -33,6 +36,7 @@ export type RegenKind = "character" | "scene";
 type LoadOptions = {
   silent?: boolean;
 };
+type PromptProfileProjectKey = "characterPromptProfile" | "scenePromptProfile";
 
 export const useWorkbenchStore = defineStore("workbench", () => {
   const current = ref<ProjectData | null>(null);
@@ -51,9 +55,13 @@ export const useWorkbenchStore = defineStore("workbench", () => {
 
   const generateCharactersJob = ref<{ projectId: string; jobId: string } | null>(null);
   const generateCharactersError = ref<string | null>(null);
+  const characterPromptProfileJob = ref<{ projectId: string; jobId: string } | null>(null);
+  const characterPromptProfileError = ref<string | null>(null);
 
   const generateScenesJob = ref<{ projectId: string; jobId: string } | null>(null);
   const generateScenesError = ref<string | null>(null);
+  const scenePromptProfileJob = ref<{ projectId: string; jobId: string } | null>(null);
+  const scenePromptProfileError = ref<string | null>(null);
 
   const registerCharacterAssetJob = ref<{ projectId: string; jobId: string; characterId: string } | null>(null);
   const registerCharacterAssetError = ref<string | null>(null);
@@ -86,8 +94,14 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   const activeGenerateCharactersJobId = computed<string | null>(() =>
     scopedJobId(generateCharactersJob.value)
   );
+  const activeCharacterPromptProfileJobId = computed<string | null>(() =>
+    scopedJobId(characterPromptProfileJob.value)
+  );
   const activeGenerateScenesJobId = computed<string | null>(() =>
     scopedJobId(generateScenesJob.value)
+  );
+  const activeScenePromptProfileJobId = computed<string | null>(() =>
+    scopedJobId(scenePromptProfileJob.value)
   );
   const activeRegisterCharacterAssetJobId = computed<string | null>(() =>
     current.value && registerCharacterAssetJob.value && registerCharacterAssetJob.value.projectId === current.value.id
@@ -128,6 +142,31 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   function regenJobIdFor(kind: RegenKind, id: string): string | null {
     const rec = regenJobs.value[`${kind}:${id}`];
     return scopedJobId(rec ?? null);
+  }
+
+  function promptProfileKey(kind: PromptProfileKind): PromptProfileProjectKey {
+    return kind === "character" ? "characterPromptProfile" : "scenePromptProfile";
+  }
+
+  function promptProfileJobRef(kind: PromptProfileKind) {
+    return kind === "character" ? characterPromptProfileJob : scenePromptProfileJob;
+  }
+
+  function promptProfileErrorRef(kind: PromptProfileKind) {
+    return kind === "character" ? characterPromptProfileError : scenePromptProfileError;
+  }
+
+  function promptProfileStateFor(kind: PromptProfileKind): PromptProfileState | null {
+    if (!current.value) return null;
+    return current.value[promptProfileKey(kind)];
+  }
+
+  function setPromptProfileState(kind: PromptProfileKind, state: PromptProfileState) {
+    if (!current.value) return;
+    current.value = {
+      ...current.value,
+      [promptProfileKey(kind)]: state
+    };
   }
 
   const activeRegenJobEntries = computed(() =>
@@ -308,6 +347,42 @@ export const useWorkbenchStore = defineStore("workbench", () => {
             (a, b) =>
               new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
           )[0];
+      const runningAny = (kinds: string[]) =>
+        jobs.find(
+          (j: JobState) =>
+            kinds.includes(j.kind) && (j.status === "queued" || j.status === "running")
+        );
+      const lastFailedAny = (kinds: string[]) =>
+        jobs
+          .filter((j: JobState) => kinds.includes(j.kind) && j.status === "failed")
+          .sort(
+            (a, b) =>
+              new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          )[0];
+
+      if (stage === "storyboard_ready") {
+        const profileJob = running("gen_character_prompt_profile");
+        if (profileJob) {
+          characterPromptProfileJob.value = { projectId: current.value.id, jobId: profileJob.id };
+        } else {
+          const failed = lastFailed("gen_character_prompt_profile");
+          if (failed) characterPromptProfileError.value = failed.error_msg;
+        }
+      } else {
+        characterPromptProfileJob.value = null;
+      }
+
+      if (stage === "characters_locked") {
+        const profileJob = running("gen_scene_prompt_profile");
+        if (profileJob) {
+          scenePromptProfileJob.value = { projectId: current.value.id, jobId: profileJob.id };
+        } else {
+          const failed = lastFailed("gen_scene_prompt_profile");
+          if (failed) scenePromptProfileError.value = failed.error_msg;
+        }
+      } else {
+        scenePromptProfileJob.value = null;
+      }
 
       const lcaJob = running("register_character_asset");
       if (lcaJob) {
@@ -325,28 +400,31 @@ export const useWorkbenchStore = defineStore("workbench", () => {
       }
 
       if (stage === "storyboard_ready") {
-        const extractJob = running("extract_characters");
-        const gcJob = running("gen_character_asset");
-        if (extractJob) {
-          generateCharactersJob.value = { projectId: current.value.id, jobId: extractJob.id };
-          generateCharactersError.value = null;
-        } else if (gcJob) {
+        const gcJob = runningAny([
+          "extract_characters",
+          "gen_character_asset",
+          "regen_character_assets_batch"
+        ]);
+        if (gcJob) {
           generateCharactersJob.value = { projectId: current.value.id, jobId: gcJob.id };
           generateCharactersError.value = null;
         } else {
           generateCharactersJob.value = null;
-          const failed =
-            lastFailed("extract_characters") ?? lastFailed("gen_character_asset");
+          const failed = lastFailedAny([
+            "extract_characters",
+            "gen_character_asset",
+            "regen_character_assets_batch"
+          ]);
           generateCharactersError.value =
             current.value.characters.length > 0 ? null : (failed?.error_msg ?? null);
         }
 
       } else if (stage === "characters_locked") {
-        const gsJob = running("gen_scene_asset");
+        const gsJob = runningAny(["gen_scene_asset", "regen_scene_assets_batch"]);
         if (gsJob) {
           generateScenesJob.value = { projectId: current.value.id, jobId: gsJob.id };
         } else {
-          const failed = lastFailed("gen_scene_asset");
+          const failed = lastFailedAny(["gen_scene_asset", "regen_scene_assets_batch"]);
           if (failed) generateScenesError.value = failed.error_msg;
         }
       }
@@ -462,6 +540,73 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     if (!current.value) return;
     generateCharactersJob.value = { projectId: current.value.id, jobId };
     generateCharactersError.value = null;
+  }
+
+  async function generatePromptProfile(kind: PromptProfileKind): Promise<string> {
+    if (!current.value) throw new Error("generatePromptProfile: no current project");
+    promptProfileErrorRef(kind).value = null;
+    const ack = await promptProfilesApi.generate(current.value.id, kind);
+    promptProfileJobRef(kind).value = { projectId: current.value.id, jobId: ack.job_id };
+    return ack.job_id;
+  }
+
+  async function savePromptProfileDraft(
+    kind: PromptProfileKind,
+    prompt: string
+  ): Promise<PromptProfileState> {
+    if (!current.value) throw new Error("savePromptProfileDraft: no current project");
+    const state = await promptProfilesApi.updateDraft(current.value.id, kind, prompt);
+    setPromptProfileState(kind, state);
+    promptProfileErrorRef(kind).value = null;
+    return state;
+  }
+
+  async function clearPromptProfileDraft(kind: PromptProfileKind): Promise<PromptProfileState> {
+    if (!current.value) throw new Error("clearPromptProfileDraft: no current project");
+    const state = await promptProfilesApi.clearDraft(current.value.id, kind);
+    setPromptProfileState(kind, state);
+    return state;
+  }
+
+  async function restoreAppliedPromptProfileDraft(kind: PromptProfileKind): Promise<PromptProfileState> {
+    const applied = promptProfileStateFor(kind)?.applied?.prompt?.trim();
+    if (!applied) throw new Error("restoreAppliedPromptProfileDraft: no applied prompt");
+    return savePromptProfileDraft(kind, applied);
+  }
+
+  function markPromptProfileJobSucceeded(kind: PromptProfileKind) {
+    promptProfileJobRef(kind).value = null;
+    promptProfileErrorRef(kind).value = null;
+  }
+
+  function markPromptProfileJobFailed(kind: PromptProfileKind, msg: string) {
+    promptProfileJobRef(kind).value = null;
+    promptProfileErrorRef(kind).value = msg;
+  }
+
+  async function confirmPromptProfileAndGenerate(kind: PromptProfileKind): Promise<string> {
+    if (!current.value) throw new Error("confirmPromptProfileAndGenerate: no current project");
+    const ack = await promptProfilesApi.confirm(current.value.id, kind);
+    const profile = promptProfileStateFor(kind);
+    if (profile?.draft) {
+      setPromptProfileState(kind, {
+        draft: profile.draft,
+        applied: profile.draft,
+        status: "applied"
+      });
+    }
+    if (kind === "character") {
+      generateCharactersError.value = null;
+      generateCharactersJob.value = { projectId: current.value.id, jobId: ack.job_id };
+    } else {
+      generateScenesError.value = null;
+      generateScenesJob.value = { projectId: current.value.id, jobId: ack.job_id };
+    }
+    return ack.job_id;
+  }
+
+  async function skipPromptProfileAndGenerate(kind: PromptProfileKind): Promise<string> {
+    return kind === "character" ? generateCharacters({}) : generateScenes({});
   }
 
   async function patchCharacter(characterId: string, payload: CharacterUpdate) {
@@ -726,7 +871,9 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     selectedShotId, selectedCharacterId, selectedSceneId, activeStep,
     activeParseJobId, activeGenStoryboardJobId, parseError,
     activeGenerateCharactersJobId, generateCharactersError,
+    activeCharacterPromptProfileJobId, characterPromptProfileError,
     activeGenerateScenesJobId, generateScenesError,
+    activeScenePromptProfileJobId, scenePromptProfileError,
     regenJobIdFor, activeRegenJobEntries,
     currentShot, selectedCharacter, selectedScene,
     load, reload, rollback,
@@ -736,6 +883,9 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     createShot, updateShot, deleteShot, reorderShots, moveShotUp, moveShotDown, confirmStoryboards,
     generateCharacters, markGenerateCharactersSucceeded, markGenerateCharactersFailed,
     attachGenerateCharactersJob,
+    generatePromptProfile, savePromptProfileDraft, clearPromptProfileDraft,
+    restoreAppliedPromptProfileDraft, markPromptProfileJobSucceeded, markPromptProfileJobFailed,
+    confirmPromptProfileAndGenerate, skipPromptProfileAndGenerate,
     patchCharacter, regenerateCharacter, registerCharacterAsset,
     generateScenes, markGenerateScenesSucceeded, markGenerateScenesFailed,
     patchScene, regenerateScene, confirmCharactersStage, confirmScenesStage, bindShotScene,

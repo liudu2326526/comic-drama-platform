@@ -1,6 +1,7 @@
 /* frontend/src/types/index.ts */
 import type {
   CharacterRoleType,
+  PromptProfileState,
   ProjectStageRaw,
   ProjectStageZh,
   RenderSubmitReference,
@@ -113,6 +114,8 @@ export interface ProjectData {
   storyboards: StoryboardShot[];
   characters: CharacterAsset[];
   scenes: SceneAsset[];
+  characterPromptProfile: PromptProfileState;
+  scenePromptProfile: PromptProfileState;
   generationProgress: string;
   generationNotes: { input: string; suggestion: string };
   generationQueue: RenderQueueItem[];

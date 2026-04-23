@@ -27,3 +27,7 @@ class Project(Base, TimestampMixin):
     setup_params: Mapped[list | None] = mapped_column(JSON, nullable=True)
     overview: Mapped[str | None] = mapped_column(Text, nullable=True)
     suggested_shots: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    character_prompt_profile_draft: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    character_prompt_profile_applied: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    scene_prompt_profile_draft: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    scene_prompt_profile_applied: Mapped[dict | None] = mapped_column(JSON, nullable=True)

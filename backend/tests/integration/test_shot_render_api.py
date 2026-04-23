@@ -74,6 +74,26 @@ async def test_build_render_draft_returns_prompt_and_references(db_session):
 
 
 @pytest.mark.asyncio
+async def test_build_render_draft_includes_applied_project_visual_profiles(db_session):
+    project, shot = await seed_renderable_project(db_session)
+    project.character_prompt_profile_applied = {
+        "prompt": "东方面孔，冷青灰色板，角色五官稳定",
+        "source": "ai",
+    }
+    project.scene_prompt_profile_applied = {
+        "prompt": "雨夜都市，克制侧逆光，空间结构稳定",
+        "source": "ai",
+    }
+    await db_session.commit()
+
+    draft = await ShotRenderService(db_session).build_render_draft(project.id, shot.id)
+
+    assert "项目级统一视觉设定" in draft["prompt"]
+    assert "角色五官稳定" in draft["prompt"]
+    assert "空间结构稳定" in draft["prompt"]
+
+
+@pytest.mark.asyncio
 async def test_create_render_version_from_confirmed_payload_increments_version(db_session):
     project, shot = await seed_renderable_project(db_session)
     svc = ShotRenderService(db_session)

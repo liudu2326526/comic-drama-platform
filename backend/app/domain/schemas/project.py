@@ -3,6 +3,8 @@ from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
 from typing import Any
 
+from app.domain.schemas.prompt_profile import PromptProfileState
+
 
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
@@ -81,6 +83,8 @@ class ProjectDetail(BaseModel):
     parsedStats: list[str] = []
     setupParams: list[str] = []
     projectOverview: str = ""
+    characterPromptProfile: PromptProfileState = PromptProfileState()
+    scenePromptProfile: PromptProfileState = PromptProfileState()
     storyboards: list = []
     characters: list = []
     scenes: list = []
