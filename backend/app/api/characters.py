@@ -1,30 +1,23 @@
-import json
-import logging
-from fastapi import APIRouter, Depends, HTTPException, Path
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, HTTPException, Path
 
 from app.api.envelope import Envelope
-from app.api.errors import CONTENT_FILTER, ApiError
+from app.api.errors import ApiError
 from app.deps import get_db
-from app.domain.models import Project, Character, Job
+from app.domain.models import Character, Job, Project
 from app.domain.schemas.character import (
-    CharacterOut, 
-    CharacterUpdate, 
-    CharacterGenerateRequest, 
+    CharacterGenerateRequest,
     CharacterLockRequest,
-    GenerateJobAck
+    CharacterOut,
+    CharacterUpdate,
+    GenerateJobAck,
 )
 from app.domain.services.character_service import CharacterService
-from app.infra import get_volcano_client
-from app.infra.volcano_errors import VolcanoContentFilterError
-from app.pipeline.states import ProjectStageRaw
-from app.pipeline.transitions import assert_asset_editable, update_job_progress, InvalidTransition
+from app.pipeline.transitions import InvalidTransition, assert_asset_editable
 from app.tasks.ai.gen_character_asset import gen_character_asset
-from app.config import get_settings
 
 router = APIRouter(prefix="/projects/{project_id}/characters", tags=["characters"])
-logger = logging.getLogger(__name__)
 
 @router.get("", response_model=Envelope[list[CharacterOut]])
 async def list_characters(
@@ -56,94 +49,40 @@ async def generate_characters(
     req: CharacterGenerateRequest = None,
     db: AsyncSession = Depends(get_db)
 ):
-    settings = get_settings()
-    # 1. 锁住项目行
     stmt = select(Project).where(Project.id == project_id).with_for_update()
     project = (await db.execute(stmt)).scalar_one_or_none()
     if not project:
         raise ApiError(40401, "项目不存在", http_status=404)
-    
+
     try:
         assert_asset_editable(project, "character")
     except InvalidTransition as e:
         raise ApiError(40301, str(e), http_status=403)
 
-    # 2. 调用 AI 提取角色
-    # 构造 prompt
-    prompt = f"请根据以下小说内容提取其中的主要角色、关键配角和氛围配角。\n\n小说内容：\n{project.story}\n\n请以 JSON 数组格式返回，每个对象包含：name, role_type(protagonist/supporting/atmosphere), summary, description。"
-    
-    volcano_client = get_volcano_client()
-    try:
-        chat_result = await volcano_client.chat_completions(
-            model=settings.ark_chat_model,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        content = chat_result.choices[0].message.content
-        from app.utils.json_utils import extract_json
-        data = extract_json(content)
-        if isinstance(data, dict):
-            char_data_list = data.get("characters", [])
-        elif isinstance(data, list):
-            char_data_list = data
-        else:
-            char_data_list = []
-            
-        if not char_data_list:
-            raise HTTPException(status_code=422, detail={"code": 40001, "message": "未识别到角色"})
-    except VolcanoContentFilterError:
-        raise HTTPException(status_code=422, detail={"code": CONTENT_FILTER, "message": "AI 内容违规"})
-    except Exception as e:
-        logger.error(f"Generate characters failed: {e}")
-        raise HTTPException(status_code=500, detail=f"AI 生成失败: {e}")
-
-    # 3. 创建主 Job
-    main_job = Job(
-        project_id=project_id,
-        kind="gen_character_asset",
-        status="running",
-        total=len(char_data_list),
-        done=0
+    running_stmt = select(Job).where(
+        Job.project_id == project_id,
+        Job.kind.in_(["extract_characters", "gen_character_asset"]),
+        Job.status.in_(["queued", "running"]),
     )
-    db.add(main_job)
-    await db.flush()
+    existing = (await db.execute(running_stmt)).scalars().first()
+    if existing:
+        raise ApiError(40901, "已有角色生成任务进行中", http_status=409)
 
-    # 4. 幂等创建 Character 并分发任务
-    sub_job_ids = []
-    tasks_to_delay = []
-    for data in char_data_list:
-        # find or create
-        stmt = select(Character).where(Character.project_id == project_id, Character.name == data["name"])
-        char = (await db.execute(stmt)).scalar_one_or_none()
-        if not char:
-            char = Character(
-                project_id=project_id,
-                name=data["name"],
-                role_type=data.get("role_type", "supporting"),
-                summary=data.get("summary"),
-                description=data.get("description")
-            )
-            db.add(char)
-            await db.flush()
-        
-        # 创建子 job
-        child_job = Job(
-            project_id=project_id,
-            parent_id=main_job.id,
-            kind="gen_character_asset_single",
-            status="queued"
-        )
-        db.add(child_job)
-        await db.flush()
-        sub_job_ids.append(child_job.id)
-        tasks_to_delay.append((char.id, child_job.id))
-
+    job = Job(
+        project_id=project_id,
+        kind="extract_characters",
+        status="queued",
+        progress=0,
+        done=0,
+        total=None,
+    )
+    db.add(job)
     await db.commit()
-    
-    # 5. 只有在事务提交后才分发任务
-    for cid, jid in tasks_to_delay:
-        gen_character_asset.delay(cid, jid)
 
-    return Envelope.success(GenerateJobAck(job_id=main_job.id, sub_job_ids=sub_job_ids))
+    from app.tasks.ai.extract_characters import extract_characters
+
+    extract_characters.delay(project_id, job.id)
+    return Envelope.success(GenerateJobAck(job_id=job.id, sub_job_ids=[]))
 
 @router.patch("/{cid}", response_model=Envelope[CharacterOut])
 async def update_character(
