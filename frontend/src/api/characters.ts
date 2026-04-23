@@ -5,17 +5,17 @@ import type {
   CharacterOut, 
   CharacterUpdate, 
   CharacterGenerateRequest, 
-  CharacterLockRequest,
-  CharacterLockResponse,
-  GenerateJobAck 
+  GenerateJobAck,
+  WorkflowStageConfirmResponse
 } from "@/types/api";
 
 const GENERATE_TIMEOUT_MS = 60_000; // 60s
-const LOCK_TIMEOUT_MS = 30_000;    // 30s buffer for async/sync lock ops
+const ACTION_TIMEOUT_MS = 30_000;
 
 export const charactersApi = {
   /**
-   * 角色生成走异步 job(后端立即 ack), 60s timeout 仅给慢网络留 buffer。
+   * 角色生成先返回 extract_characters 主 job,随后前端会自动接续到 gen_character_asset 主 job。
+   * 60s timeout 仅给慢网络留 buffer。
    */
   async generate(projectId: string, payload: CharacterGenerateRequest = {}): Promise<GenerateJobAck> {
     const r = await client.post(`/projects/${projectId}/characters/generate`, payload, { 
@@ -34,12 +34,16 @@ export const charactersApi = {
     return r.data;
   },
 
-  /**
-   * 主角锁定走异步 job(后端立即 ack), 普通锁定本地落库; 30s timeout 仅给慢网络留 buffer。
-   */
-  async lock(projectId: string, characterId: string, payload: CharacterLockRequest = {}): Promise<CharacterLockResponse> {
-    const r = await client.post(`/projects/${projectId}/characters/${characterId}/lock`, payload, { 
-      timeout: LOCK_TIMEOUT_MS 
+  async registerAsset(projectId: string, characterId: string): Promise<GenerateJobAck> {
+    const r = await client.post(`/projects/${projectId}/characters/${characterId}/register_asset`, {}, {
+      timeout: ACTION_TIMEOUT_MS
+    });
+    return r.data;
+  },
+
+  async confirmStage(projectId: string): Promise<WorkflowStageConfirmResponse> {
+    const r = await client.post(`/projects/${projectId}/characters/confirm`, {}, {
+      timeout: ACTION_TIMEOUT_MS,
     });
     return r.data;
   },

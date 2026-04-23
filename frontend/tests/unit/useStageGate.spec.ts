@@ -38,36 +38,39 @@ describe("gateFlags", () => {
   });
 
   describe("M3a gates", () => {
-    it("storyboard_ready: can edit/lock/generate characters, not scenes", () => {
+    it("storyboard_ready: can edit/generate characters and入人像库, not scenes", () => {
       const f = gateFlags("storyboard_ready");
       expect(f.canEditCharacters).toBe(true);
-      expect(f.canLockCharacter).toBe(true);
+      expect(f.canRegisterCharacterAsset).toBe(true);
+      expect(f.canConfirmCharacters).toBe(true);
       expect(f.canGenerateCharacters).toBe(true);
       expect(f.canEditScenes).toBe(false);
       expect(f.canBindScene).toBe(false);
-      expect(f.canLockScene).toBe(false);
+      expect(f.canConfirmScenes).toBe(false);
       expect(f.canGenerateScenes).toBe(false);
     });
 
-    it("characters_locked: can edit/lock/generate/bind scenes, not characters", () => {
+    it("characters_locked: can edit/generate scenes and confirm render stage, while still allowing入人像库", () => {
       const f = gateFlags("characters_locked");
       expect(f.canEditCharacters).toBe(false);
-      expect(f.canLockCharacter).toBe(false);
+      expect(f.canRegisterCharacterAsset).toBe(true);
+      expect(f.canConfirmCharacters).toBe(false);
       expect(f.canGenerateCharacters).toBe(false);
       expect(f.canEditScenes).toBe(true);
       expect(f.canBindScene).toBe(true);
-      expect(f.canLockScene).toBe(true);
+      expect(f.canConfirmScenes).toBe(true);
       expect(f.canGenerateScenes).toBe(true);
+      expect(f.canRender).toBe(false);
     });
 
-    it("scenes_locked and later: neither character nor scene edits allowed", () => {
+    it("scenes_locked and later: character/scene edits stay closed, but入人像库 remains available", () => {
       const raws = ["scenes_locked", "rendering", "ready_for_export", "exported"] as const;
       for (const r of raws) {
         const f = gateFlags(r);
         expect(f.canEditCharacters).toBe(false);
         expect(f.canEditScenes).toBe(false);
-        expect(f.canLockCharacter).toBe(false);
-        expect(f.canLockScene).toBe(false);
+        expect(f.canRegisterCharacterAsset).toBe(true);
+        expect(f.canConfirmScenes).toBe(false);
         expect(f.canBindScene).toBe(false);
       }
     });

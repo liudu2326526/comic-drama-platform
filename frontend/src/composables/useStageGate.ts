@@ -8,11 +8,12 @@ export interface StageGateFlags {
   canEditStoryboards: boolean;
   canGenerateCharacters: boolean;
   canGenerateScenes: boolean;
-  canEditCharacters: boolean; // M3a 新增:角色编辑窗口(严格对齐后端 assert_asset_editable("character") = storyboard_ready)
-  canEditScenes: boolean; // M3a 新增:scenes 编辑窗口(= characters_locked)
-  canBindScene: boolean; // M3a 新增:bind_scene 仅在 characters_locked 允许
-  canLockCharacter: boolean; // M3a 新增:lock 接口后端要求 stage_raw ∈ {storyboard_ready}
-  canLockScene: boolean; // M3a 新增:lock scene 要求 stage_raw ∈ {characters_locked}
+  canEditCharacters: boolean;
+  canEditScenes: boolean;
+  canBindScene: boolean;
+  canRegisterCharacterAsset: boolean;
+  canConfirmCharacters: boolean;
+  canConfirmScenes: boolean;
   canRender: boolean;
   canExport: boolean;
   canLockShot: boolean;
@@ -22,6 +23,13 @@ export interface StageGateFlags {
 export function gateFlags(raw: ProjectStageRaw | null | undefined): StageGateFlags {
   const isStoryboardReady = raw === "storyboard_ready";
   const isCharactersLocked = raw === "characters_locked";
+  const canRegisterCharacterAsset =
+    raw === "storyboard_ready" ||
+    raw === "characters_locked" ||
+    raw === "scenes_locked" ||
+    raw === "rendering" ||
+    raw === "ready_for_export" ||
+    raw === "exported";
   return {
     canEditStoryboards: raw === "draft" || isStoryboardReady,
     canGenerateCharacters: isStoryboardReady,
@@ -29,9 +37,10 @@ export function gateFlags(raw: ProjectStageRaw | null | undefined): StageGateFla
     canEditCharacters: isStoryboardReady,
     canEditScenes: isCharactersLocked,
     canBindScene: isCharactersLocked,
-    canLockCharacter: isStoryboardReady,
-    canLockScene: isCharactersLocked,
-    canRender: raw === "scenes_locked" || raw === "rendering",
+    canRegisterCharacterAsset,
+    canConfirmCharacters: isStoryboardReady,
+    canConfirmScenes: isCharactersLocked,
+    canRender: raw === "scenes_locked" || raw === "rendering" || raw === "ready_for_export",
     canExport: raw === "ready_for_export",
     canLockShot: raw === "rendering" || raw === "ready_for_export",
     canRollback: !!raw && raw !== "draft"

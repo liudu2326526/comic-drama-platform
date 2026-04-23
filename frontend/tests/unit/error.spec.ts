@@ -31,6 +31,6 @@ describe("messageFor", () => {
   });
 
   it("maps 42201 to '内容违规' text", () => {
-    expect(messageFor(42201)).toContain("内容违规");
+    expect(messageFor(42201)).toContain("文案或参考图");
   });
 });

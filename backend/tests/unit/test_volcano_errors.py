@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from app.infra.volcano_errors import (
-    VolcanoError, VolcanoAuthError, VolcanoParamError,
+    VolcanoAuthError, VolcanoParamError,
     VolcanoRateLimitError, VolcanoContentFilterError,
     VolcanoServerError, classify_http,
 )
@@ -36,6 +36,14 @@ class TestClassify:
     def test_content_filter_from_400_code(self):
         r = _resp(400, b'{"error":{"code":"ContentFilter"}}')
         with pytest.raises(VolcanoContentFilterError):
+            classify_http(r)
+
+    def test_input_image_privacy_filter_from_400_code_uses_friendly_message(self):
+        r = _resp(400, b'{"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformation"}}')
+        with pytest.raises(
+            VolcanoContentFilterError,
+            match="参考图被平台判定含隐私或敏感信息，请更换参考图后重试",
+        ):
             classify_http(r)
 
     def test_5xx_server(self):

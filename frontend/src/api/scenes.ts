@@ -5,9 +5,8 @@ import type {
   SceneOut,
   SceneUpdate,
   SceneGenerateRequest,
-  SceneLockRequest,
-  SceneLockResponse,
-  GenerateJobAck
+  GenerateJobAck,
+  WorkflowStageConfirmResponse
 } from "@/types/api";
 
 // AI 提取场景列表可能较慢。
@@ -36,9 +35,9 @@ export const scenesApi = {
       })
       .then((r) => r.data as GenerateJobAck);
   },
-  lock(projectId: string, sceneId: string, payload: SceneLockRequest = {}): Promise<SceneLockResponse> {
+  confirmStage(projectId: string): Promise<WorkflowStageConfirmResponse> {
     return client
-      .post(`/projects/${projectId}/scenes/${sceneId}/lock`, payload, { timeout: 30_000 })
-      .then((r) => r.data as SceneLockResponse);
+      .post(`/projects/${projectId}/scenes/confirm`, {}, { timeout: 30_000 })
+      .then((r) => r.data as WorkflowStageConfirmResponse);
   }
 };

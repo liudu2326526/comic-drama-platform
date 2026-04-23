@@ -30,9 +30,9 @@ export type ProjectStageRaw =
 
 export type ProjectStageZh =
   | "草稿中"
-  | "分镜已生成"
-  | "角色已锁定"
-  | "场景已匹配"
+  | "角色设定中"
+  | "场景设定中"
+  | "镜头待生成"
   | "镜头生成中"
   | "待导出"
   | "已导出";
@@ -95,6 +95,15 @@ export interface ProjectRollbackResponse {
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 
+export interface JobResultPayload {
+  next_job_id?: string | null;
+  next_kind?: "gen_character_asset" | null;
+  character_ids?: string[];
+  render_id?: string | null;
+  draft_id?: string | null;
+  version_no?: number | null;
+}
+
 export interface JobState {
   id: string;
   kind: string;
@@ -103,7 +112,7 @@ export interface JobState {
   total: number | null;
   done: number;
   payload: unknown | null;
-  result: unknown | null;
+  result: JobResultPayload | null;
   error_msg: string | null;
   target_type?: string | null;
   target_id?: string | null;
@@ -121,9 +130,13 @@ export interface RenderDraftReference {
 }
 
 export interface RenderDraftRead {
+  id?: string;
   shot_id: string;
+  version_no?: number;
   prompt: string;
   references: RenderDraftReference[];
+  optimizer_snapshot?: Record<string, unknown> | null;
+  created_at?: string;
 }
 
 export interface RenderSubmitReference {
@@ -137,6 +150,42 @@ export interface RenderSubmitReference {
 export interface RenderSubmitRequest {
   prompt: string;
   references: RenderSubmitReference[];
+}
+
+export const SHOT_VIDEO_DURATION_PRESETS = [4, 5, 8, 10] as const;
+export type ShotVideoDurationPreset = (typeof SHOT_VIDEO_DURATION_PRESETS)[number];
+export type ShotVideoResolution = "480p" | "720p";
+export type ShotVideoModelType = "standard" | "fast";
+
+export interface ShotVideoSubmitRequest {
+  prompt: string;
+  references: RenderSubmitReference[];
+  duration?: number;
+  resolution: ShotVideoResolution;
+  model_type: ShotVideoModelType;
+}
+
+export interface ShotVideoVersionRead {
+  id: string;
+  shot_id: string;
+  version_no: number;
+  status: string;
+  prompt_snapshot: Record<string, unknown> | null;
+  params_snapshot: Record<string, unknown> | null;
+  video_url: string | null;
+  last_frame_url: string | null;
+  provider_task_id: string | null;
+  error_code: string | null;
+  error_msg: string | null;
+  created_at: string;
+  finished_at: string | null;
+  is_current: boolean;
+}
+
+export interface ShotVideoVersionSelectResponse {
+  shot_id: string;
+  current_video_render_id: string | null;
+  status: string;
 }
 
 export interface RenderVersionRead {
@@ -162,7 +211,7 @@ export interface RenderVersionSelectResponse {
 
 export interface ShotLockResponse {
   shot_id: string;
-  current_render_id: string | null;
+  current_video_render_id: string | null;
   status: string;
 }
 
@@ -178,6 +227,11 @@ export interface StoryboardDetail {
   status: string; // pending|generating|succeeded|failed|locked
   scene_id: string | null;
   current_render_id: string | null;
+  current_video_render_id?: string | null;
+  current_video_url?: string | null;
+  current_last_frame_url?: string | null;
+  current_video_version_no?: number | null;
+  current_video_params_snapshot?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -208,6 +262,11 @@ export interface StoryboardReorderResponse {
 }
 
 export interface StoryboardConfirmResponse {
+  stage: ProjectStageRaw;
+  stage_raw: ProjectStageRaw;
+}
+
+export interface WorkflowStageConfirmResponse {
   stage: ProjectStageRaw;
   stage_raw: ProjectStageRaw;
 }
@@ -248,23 +307,6 @@ export interface CharacterGenerateRequest {
   extra_hints?: string[]; // 允许为空;后端 M3a 暂不消费,保留给后续 prompt 增强
 }
 
-export interface CharacterLockRequest {
-  as_protagonist?: boolean; // true → 触发后端 lock_protagonist(异步); false 仅置 locked=true(同步)
-}
-
-export interface CharacterLockResponseSync {
-  ack: "sync";
-  id: string;
-  locked: boolean;
-  is_protagonist: boolean;
-}
-
-export interface CharacterLockResponseAsync extends GenerateJobAck {
-  ack: "async";
-}
-
-export type CharacterLockResponse = CharacterLockResponseSync | CharacterLockResponseAsync;
-
 export interface GenerateJobAck {
   job_id: string; // 主 job;前端只轮询它
   sub_job_ids: string[]; // 子 job 列表,本期只用于调试打印
@@ -296,14 +338,6 @@ export interface SceneUpdate {
 
 export interface SceneGenerateRequest {
   template_whitelist?: string[]; // 空 = 不限;后端 M3a 暂不消费,保留给后续模板筛选
-}
-
-export interface SceneLockRequest {
-  // 占位,后端目前无字段,但保留接口形状以便后续扩展
-}
-
-export interface SceneLockResponse extends GenerateJobAck {
-  ack: "async";
 }
 
 export interface BindSceneRequest {

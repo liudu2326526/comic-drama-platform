@@ -12,6 +12,10 @@ import { useJobPolling } from "@/composables/useJobPolling";
 import { useToast } from "@/composables/useToast";
 import { confirm as uiConfirm } from "@/composables/useConfirm";
 import { ApiError, messageFor } from "@/utils/error";
+import {
+  getCharacterAssetLibraryAction,
+  getCharacterAssetLibraryBadge
+} from "@/utils/characterAssetLibrary";
 import type { CharacterAsset } from "@/types";
 import type { CharacterUpdate, JobState } from "@/types/api";
 
@@ -21,11 +25,10 @@ const {
   selectedCharacter,
   selectedCharacterId,
   activeGenerateCharactersJobId,
-  activeLockCharacterJobId,
-  activeLockCharacterId,
-  activeRegenJobEntries,
+  activeRegisterCharacterAssetJobId,
+  activeRegisterCharacterAssetCharacterId,
   generateCharactersError,
-  lockCharacterError
+  registerCharacterAssetError
 } = storeToRefs(store);
 const { flags } = useStageGate();
 const toast = useToast();
@@ -38,7 +41,12 @@ const starting = ref(false);
 // ---- 生成主 job 轮询(空态入口) ----
 const { job: generateJob } = useJobPolling(activeGenerateCharactersJobId, {
   onProgress: () => void 0,
-  onSuccess: async () => {
+  onSuccess: async (job) => {
+    const nextJobId = job.result?.next_job_id;
+    if (job.kind === "extract_characters" && nextJobId) {
+      store.attachGenerateCharactersJob(nextJobId);
+      return;
+    }
     try {
       await store.reload();
       store.markGenerateCharactersSucceeded();
@@ -48,9 +56,11 @@ const { job: generateJob } = useJobPolling(activeGenerateCharactersJobId, {
     }
   },
   onError: (j, err) => {
-    const msg =
+    const prefix = j?.kind === "extract_characters" ? "角色提取失败" : "角色出图失败";
+    const detail =
       j?.error_msg ??
       (err instanceof ApiError ? messageFor(err.code, err.message) : "生成失败");
+    const msg = `${prefix}: ${detail}`;
     store.markGenerateCharactersFailed(msg);
     toast.error(msg);
   }
@@ -59,33 +69,34 @@ const { job: generateJob } = useJobPolling(activeGenerateCharactersJobId, {
 const generateProgressLabel = computed(() => {
   const j = generateJob.value;
   if (!j) return "正在排队…";
+  if (j.kind === "extract_characters") return "正在提取角色…";
   if (j.total && j.total > 0) return `正在生成角色… ${j.done}/${j.total}`;
   return `正在生成角色… ${j.progress}%`;
 });
 
-// ---- 锁定主角异步 job 轮询 ----
-const { job: lockJob } = useJobPolling(activeLockCharacterJobId, {
+// ---- 入人像库异步 job 轮询 ----
+const { job: registerAssetJob } = useJobPolling(activeRegisterCharacterAssetJobId, {
   onProgress: () => void 0,
   onSuccess: async () => {
     try {
       await store.reload();
-      store.markLockCharacterSucceeded();
-      toast.success("主角已锁定并入库");
+      store.markRegisterCharacterAssetSucceeded();
+      toast.success("角色已入人像库");
     } catch (e) {
-      store.markLockCharacterFailed((e as Error).message);
+      store.markRegisterCharacterAssetFailed((e as Error).message);
     }
   },
   onError: (j, err) => {
     const msg =
       j?.error_msg ??
-      (err instanceof ApiError ? messageFor(err.code, err.message) : "锁定失败");
-    store.markLockCharacterFailed(msg);
+      (err instanceof ApiError ? messageFor(err.code, err.message) : "入库失败");
+    store.markRegisterCharacterAssetFailed(msg);
     toast.error(msg);
   }
 });
 
-const lockProgressLabel = computed(() => {
-  const j = lockJob.value;
+const registerAssetProgressLabel = computed(() => {
+  const j = registerAssetJob.value;
   if (!j) return "正在排队…";
   const stepMap: Record<number, string> = {
     0: "创建资产组",
@@ -93,7 +104,7 @@ const lockProgressLabel = computed(() => {
     2: "等待 Active",
     3: "完成"
   };
-  return `正在锁定主角… ${stepMap[j.done] ?? `${j.done}/3`}`;
+  return `正在入人像库… ${stepMap[j.done] ?? `${j.done}/3`}`;
 });
 
 // ---- 单项 regen 轮询(按当前选中项精确找回) ----
@@ -147,7 +158,7 @@ async function handleGenerate() {
 
 function openEdit() {
   if (!flags.value.canEditCharacters) {
-    toast.warning("当前阶段已锁定,如需修改请回退阶段", {
+    toast.warning("当前阶段不允许编辑角色,如需修改请回退阶段", {
       action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
     });
     return;
@@ -164,7 +175,7 @@ async function handleEditSubmit(payload: CharacterUpdate) {
     editorOpen.value = false;
   } catch (e) {
     if (e instanceof ApiError && e.code === 40301) {
-      toast.warning("当前阶段已锁定,如需修改请回退阶段", {
+      toast.warning("当前阶段不允许编辑角色,如需修改请回退阶段", {
         action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
       });
     } else if (e instanceof ApiError) {
@@ -180,7 +191,7 @@ async function handleEditSubmit(payload: CharacterUpdate) {
 async function handleRegen() {
   if (!selectedCharacter.value) return;
   if (!flags.value.canEditCharacters) {
-    toast.warning("当前阶段已锁定,如需修改请回退阶段", {
+    toast.warning("当前阶段不允许编辑角色,如需修改请回退阶段", {
       action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
     });
     return;
@@ -196,48 +207,64 @@ async function handleRegen() {
   }
 }
 
-async function handleLock(asProtagonist: boolean) {
+async function handleRegisterAsset() {
   if (!selectedCharacter.value) return;
-  if (!flags.value.canLockCharacter) {
-    toast.warning("当前阶段不允许锁定角色", {
+  if (!flags.value.canRegisterCharacterAsset) {
+    toast.warning("当前阶段不允许执行入人像库", {
       action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
     });
     return;
   }
-  const label = asProtagonist ? (selectedIsProtagonist.value ? "锁定主角" : "设为主角并锁定") : "锁定角色";
-  const body = asProtagonist
-    ? selectedIsProtagonist.value
-      ? "锁定当前主角。锁定后描述不可编辑,需先回退阶段。"
-      : "将此角色设为主角并入人像库。同一项目内只能有一个主角,已有的主角会自动降级为配角。此操作需调用人像库,约 10-120 秒。"
-    : "锁定此角色,锁定后描述不可编辑,需先回退阶段。";
-  const ok = await uiConfirm({ title: label, body, confirmText: "确认", danger: false });
+  const ok = await uiConfirm({
+    title: "入人像库",
+    body: "将当前角色参考图异步注册到人像库，约 10-120 秒。入库不会锁定角色，也不会推进项目阶段。",
+    confirmText: "确认入库",
+    danger: false
+  });
   if (!ok) return;
   busy.value = true;
   try {
-    await store.lockCharacter(selectedCharacter.value.id, { as_protagonist: asProtagonist });
-    if (!asProtagonist) {
-      toast.success("角色已锁定");
-    }
+    await store.registerCharacterAsset(selectedCharacter.value.id);
+    toast.info("已提交入人像库任务");
   } catch (e) {
     if (e instanceof ApiError && e.code === 42201) {
       toast.error(messageFor(42201, e.message));
     } else if (e instanceof ApiError) {
       toast.error(messageFor(e.code, e.message));
     } else {
-      toast.error("锁定失败");
+      toast.error("入库失败");
     }
   } finally {
     busy.value = false;
   }
+}
+
+async function handleConfirmStage() {
+  if (!flags.value.canConfirmCharacters) {
+    toast.warning("当前阶段不允许进入场景设定");
+    return;
   }
+  busy.value = true;
+  try {
+    await store.confirmCharactersStage();
+    toast.success("已进入场景设定");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "确认失败");
+  } finally {
+    busy.value = false;
+  }
+}
 
 // ---- UI helpers ----
 function badgeFor(c: CharacterAsset): string | null {
-  if (c.is_protagonist && c.locked) return "主角 · 已锁定";
-  if (c.locked) return "已锁定";
-  if (c.is_protagonist) return "主角";
-  return null;
+  return getCharacterAssetLibraryBadge(c);
 }
+
+const selectedCharacterAssetAction = computed(() =>
+  selectedCharacter.value
+    ? getCharacterAssetLibraryAction(selectedCharacter.value)
+    : { label: "入人像库", disabled: false }
+);
 
 const canStartGenerate = computed(
   () =>
@@ -245,9 +272,6 @@ const canStartGenerate = computed(
     (current.value?.characters.length ?? 0) === 0 &&
     !activeGenerateCharactersJobId.value
 );
-
-const selectedIsLocked = computed(() => !!selectedCharacter.value?.locked);
-const selectedIsProtagonist = computed(() => !!selectedCharacter.value?.is_protagonist);
 
 const selectedRegenJobId = computed(() =>
   selectedCharacter.value
@@ -263,7 +287,14 @@ const selectedRegenProgress = computed(() =>
 <template>
   <PanelSection v-if="current" kicker="03" title="角色设定">
     <template #actions>
-      <button class="ghost-btn" type="button" disabled>新增角色资产</button>
+      <button
+        class="primary-btn"
+        type="button"
+        :disabled="busy || !flags.canConfirmCharacters"
+        @click="handleConfirmStage"
+      >
+        确认进入场景设定
+      </button>
     </template>
 
     <!-- 生成主 job 进度 -->
@@ -274,12 +305,11 @@ const selectedRegenProgress = computed(() =>
       <ProgressBar :value="generateJob?.progress ?? 0" />
     </div>
 
-    <!-- 锁定主角进度 -->
-    <div v-else-if="activeLockCharacterJobId" class="gen-banner running">
+    <div v-else-if="activeRegisterCharacterAssetJobId" class="gen-banner running">
       <div class="gen-head">
-        <strong>{{ lockProgressLabel }}</strong>
+        <strong>{{ registerAssetProgressLabel }}</strong>
       </div>
-      <ProgressBar :value="lockJob ? Math.round((lockJob.done / 3) * 100) : 0" />
+      <ProgressBar :value="registerAssetJob ? Math.round((registerAssetJob.done / 3) * 100) : 0" />
       <p class="hint">正在调用人像库, 约 10-120 秒。可继续浏览, 完成后会自动刷新。</p>
     </div>
 
@@ -292,13 +322,12 @@ const selectedRegenProgress = computed(() =>
       <p>{{ generateCharactersError }}</p>
     </div>
 
-    <!-- 锁定失败 banner -->
-    <div v-else-if="lockCharacterError" class="gen-banner error">
+    <div v-else-if="registerCharacterAssetError" class="gen-banner error">
       <div class="gen-head">
-        <strong>主角锁定失败</strong>
-        <button class="ghost-btn small" @click="handleLock(true)">重试</button>
+        <strong>入人像库失败</strong>
+        <button class="ghost-btn small" @click="handleRegisterAsset">重试</button>
       </div>
-      <p>{{ lockCharacterError }}</p>
+      <p>{{ registerCharacterAssetError }}</p>
     </div>
 
     <!-- 空态大按钮 -->
@@ -376,37 +405,36 @@ const selectedRegenProgress = computed(() =>
             <div class="asset-actions">
               <button
                 class="ghost-btn"
-                :disabled="busy || selectedIsLocked || !flags.canEditCharacters"
-                :title="selectedIsLocked || !flags.canEditCharacters ? '已锁定,如需修改请回退阶段' : '编辑描述'"
+                :disabled="busy || !flags.canEditCharacters"
+                :title="flags.canEditCharacters ? '编辑描述' : '当前阶段不允许编辑角色,请回退阶段'"
                 @click="openEdit"
               >
                 编辑描述
               </button>
               <button
                 class="ghost-btn"
-                :disabled="busy || selectedIsLocked || selectedHasRegenJob || !flags.canEditCharacters"
-                :title="selectedIsLocked || !flags.canEditCharacters ? '已锁定,如需修改请回退阶段' : '重新生成参考图'"
+                :disabled="busy || selectedHasRegenJob || !flags.canEditCharacters"
+                :title="flags.canEditCharacters ? '重新生成参考图' : '当前阶段不允许编辑角色,请回退阶段'"
                 @click="handleRegen"
               >
                 {{ selectedHasRegenJob ? `重生成中…(${selectedRegenProgress}%)` : "重新生成参考图" }}
               </button>
               <button
-                v-if="!selectedIsLocked"
                 class="primary-btn"
-                :disabled="busy || !flags.canLockCharacter || !!activeLockCharacterJobId"
-                :title="flags.canLockCharacter ? (selectedIsProtagonist ? '锁定主角' : '设为主角并锁定') : '当前阶段不允许锁定角色,请回退阶段'"
-                @click="handleLock(true)"
+                :disabled="
+                  busy ||
+                  !flags.canRegisterCharacterAsset ||
+                  !!activeRegisterCharacterAssetJobId ||
+                  selectedCharacterAssetAction.disabled
+                "
+                :title="flags.canRegisterCharacterAsset ? '入人像库' : '当前阶段不允许执行入人像库,请回退阶段'"
+                @click="handleRegisterAsset"
               >
-                {{ activeLockCharacterId === selectedCharacter.id ? '入库中...' : (selectedIsProtagonist ? "锁定主角" : "设为主角 · 锁定") }}
-              </button>
-              <button
-                v-if="!selectedIsLocked && !selectedIsProtagonist"
-                class="ghost-btn"
-                :disabled="busy || !flags.canLockCharacter || !!activeLockCharacterJobId"
-                :title="flags.canLockCharacter ? '仅锁定角色' : '当前阶段不允许锁定角色,请回退阶段'"
-                @click="handleLock(false)"
-              >
-                仅锁定
+                {{
+                  activeRegisterCharacterAssetCharacterId === selectedCharacter.id
+                    ? "入库中..."
+                    : selectedCharacterAssetAction.label
+                }}
               </button>
             </div>
           </div>

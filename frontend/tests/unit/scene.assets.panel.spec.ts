@@ -5,7 +5,7 @@ import SceneAssetsPanel from "@/components/scene/SceneAssetsPanel.vue";
 import { useWorkbenchStore } from "@/store/workbench";
 
 describe("SceneAssetsPanel", () => {
-  it("M3b 仍保留绑定镜头入口，并标明它是进入 scenes_locked 的过渡步骤", () => {
+  it("不再展示镜头绑定过渡入口，只保留场景资产管理动作", () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const store = useWorkbenchStore();
@@ -34,7 +34,9 @@ describe("SceneAssetsPanel", () => {
     } as never;
 
     const wrapper = mount(SceneAssetsPanel, { global: { plugins: [pinia] } });
-    expect(wrapper.text()).toContain("绑定镜头");
-    expect(wrapper.text()).toContain("进入渲染阶段前仍需先完成镜头绑定");
+    expect(wrapper.text()).not.toContain("绑定镜头");
+    expect(wrapper.text()).not.toContain("进入渲染阶段前仍需先完成镜头绑定");
+    expect(wrapper.text()).toContain("编辑描述");
+    expect(wrapper.text()).toContain("重新生成参考图");
   });
 });

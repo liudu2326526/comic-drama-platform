@@ -17,7 +17,7 @@ from app.pipeline.states import (
 from app.pipeline.storyboard_states import StoryboardStatus, is_storyboard_transition_allowed
 
 if TYPE_CHECKING:
-    from app.domain.models import Job, Project, Character, Scene
+    from app.domain.models import Job, Project, Character
 
 
 class InvalidTransition(Exception):
@@ -116,7 +116,7 @@ async def lock_protagonist(session: AsyncSession, project: Project, character: C
 
 
 async def advance_to_characters_locked(session: AsyncSession, project: Project) -> None:
-    """推进到 characters_locked 阶段。要求项目内至少有一个已锁定的主角。"""
+    """推进到 characters_locked 阶段。要求项目内至少有一个角色。"""
     from app.domain.models import Character
     
     current = ProjectStageRaw(project.stage)
@@ -125,44 +125,26 @@ async def advance_to_characters_locked(session: AsyncSession, project: Project) 
 
     stmt = select(func.count(Character.id)).where(
         Character.project_id == project.id,
-        Character.is_protagonist.is_(True),
-        Character.locked.is_(True)
     )
     count = (await session.execute(stmt)).scalar() or 0
     if count == 0:
-        raise InvalidTransition(current.value, ProjectStageRaw.CHARACTERS_LOCKED.value, "项目内未发现已锁定的主角")
+        raise InvalidTransition(current.value, ProjectStageRaw.CHARACTERS_LOCKED.value, "项目内至少需要 1 个角色后才能进入场景设定")
     
     project.stage = ProjectStageRaw.CHARACTERS_LOCKED.value
 
 
 async def advance_to_scenes_locked(session: AsyncSession, project: Project) -> None:
-    """推进到 scenes_locked 阶段。要求所有分镜都已绑定已锁定的场景。"""
-    from app.domain.models import StoryboardShot, Scene
+    """推进到 scenes_locked 阶段。要求项目内至少有一个场景。"""
+    from app.domain.models import Scene
     
     current = ProjectStageRaw(project.stage)
     if current != ProjectStageRaw.CHARACTERS_LOCKED:
-        raise InvalidTransition(current.value, ProjectStageRaw.SCENES_LOCKED.value, "当前阶段不可推进到场景锁定")
+        raise InvalidTransition(current.value, ProjectStageRaw.SCENES_LOCKED.value, "当前阶段不可推进到镜头生成")
 
-    # 检查是否有未绑定场景的分镜,或绑定的场景未锁定,或绑定的场景不属于该项目
-    stmt = select(func.count(StoryboardShot.id)).where(
-        StoryboardShot.project_id == project.id
-    ).where(
-        StoryboardShot.scene_id.is_(None) |
-        ~select(Scene.id).where(
-            Scene.id == StoryboardShot.scene_id,
-            Scene.project_id == project.id,
-            Scene.locked.is_(True)
-        ).exists()
-    )
-    
-    invalid_count = (await session.execute(stmt)).scalar() or 0
-    if invalid_count > 0:
-        raise InvalidTransition(current.value, ProjectStageRaw.SCENES_LOCKED.value, f"仍有 {invalid_count} 个分镜未绑定已锁定的场景")
-
-    # 还要检查项目是否有分镜
-    total_shots = await count_project_storyboards(session, project.id)
-    if total_shots == 0:
-        raise InvalidTransition(current.value, ProjectStageRaw.SCENES_LOCKED.value, "项目内无分镜")
+    stmt = select(func.count(Scene.id)).where(Scene.project_id == project.id)
+    scene_count = (await session.execute(stmt)).scalar() or 0
+    if scene_count == 0:
+        raise InvalidTransition(current.value, ProjectStageRaw.SCENES_LOCKED.value, "项目内至少需要 1 个场景后才能进入镜头生成")
 
     project.stage = ProjectStageRaw.SCENES_LOCKED.value
 
@@ -179,7 +161,7 @@ async def advance_stage(
 async def rollback_stage(
     session: AsyncSession, project: Project, target: ProjectStageRaw
 ) -> InvalidatedCounts:
-    from app.domain.models import Character, Scene, StoryboardShot
+    from app.domain.models import StoryboardShot
 
     current = ProjectStageRaw(project.stage)
     if not is_rollback_allowed(current, target):
@@ -209,7 +191,7 @@ async def rollback_stage(
         result = await session.execute(reset_render_stmt)
         counts.shots_reset = result.rowcount or 0
 
-    # 2) 越过 SCENES_LOCKED:清 shot.scene_id + 场景解锁
+    # 2) 越过 SCENES_LOCKED:清 shot.scene_id
     if crossed(ProjectStageRaw.SCENES_LOCKED):
         clear_scene_stmt = (
             update(StoryboardShot)
@@ -217,23 +199,10 @@ async def rollback_stage(
             .values(scene_id=None)
         )
         await session.execute(clear_scene_stmt)
-        unlock_scene_stmt = (
-            update(Scene)
-            .where(Scene.project_id == project.id, Scene.locked.is_(True))
-            .values(locked=False)
-        )
-        result = await session.execute(unlock_scene_stmt)
-        counts.scenes_unlocked = result.rowcount or 0
 
-    # 3) 越过 CHARACTERS_LOCKED:角色解锁
+    # 3) 越过 CHARACTERS_LOCKED: 不再解锁角色,保留历史计数为 0
     if crossed(ProjectStageRaw.CHARACTERS_LOCKED):
-        unlock_char_stmt = (
-            update(Character)
-            .where(Character.project_id == project.id, Character.locked.is_(True))
-            .values(locked=False)
-        )
-        result = await session.execute(unlock_char_stmt)
-        counts.characters_unlocked = result.rowcount or 0
+        counts.characters_unlocked = 0
 
     # 4) 最后改 project.stage
     project.stage = target.value
@@ -339,6 +308,44 @@ def mark_shot_render_failed(
     _set_storyboard_status(shot, StoryboardStatus.FAILED, "当前镜头状态不可标记渲染失败")
 
 
+def mark_shot_video_running(video_render: object) -> None:
+    current = getattr(video_render, "status")
+    if current != "queued":
+        raise InvalidTransition(current, "running", "shot_video_render 只能 queued → running")
+    video_render.status = "running"
+    video_render.error_code = None
+    video_render.error_msg = None
+
+
+def mark_shot_video_succeeded(shot: object, video_render: object, *, video_url: str, last_frame_url: str | None) -> None:
+    current = getattr(video_render, "status")
+    if current != "running":
+        raise InvalidTransition(current, "succeeded", "shot_video_render 只能 running → succeeded")
+    video_render.status = "succeeded"
+    video_render.video_url = video_url
+    video_render.last_frame_url = last_frame_url
+    video_render.finished_at = datetime.utcnow()
+    _set_storyboard_status(shot, StoryboardStatus.SUCCEEDED, "当前镜头状态不可标记视频渲染成功")
+    shot.current_video_render_id = video_render.id
+
+
+def mark_shot_video_failed(
+    shot: object,
+    video_render: object,
+    *,
+    error_code: str,
+    error_msg: str,
+) -> None:
+    current = getattr(video_render, "status")
+    if current not in {"queued", "running"}:
+        raise InvalidTransition(current, "failed", "shot_video_render 只能 queued/running → failed")
+    video_render.status = "failed"
+    video_render.error_code = error_code
+    video_render.error_msg = error_msg
+    video_render.finished_at = datetime.utcnow()
+    _set_storyboard_status(shot, StoryboardStatus.FAILED, "当前镜头状态不可标记视频渲染失败")
+
+
 def mark_shot_locked(shot: object) -> None:
     _set_storyboard_status(shot, StoryboardStatus.LOCKED, "只有 succeeded 镜头可锁定最终版")
 
@@ -351,12 +358,20 @@ def select_shot_render_version(shot: object, render: object) -> None:
     _set_storyboard_status(shot, StoryboardStatus.SUCCEEDED, "当前镜头状态不可切换到成功版本")
 
 
+def select_shot_video_version(shot: object, video_render: object) -> None:
+    current = getattr(video_render, "status")
+    if current != "succeeded":
+        raise InvalidTransition(current, "select_video", "只能选择 succeeded 的视频版本")
+    shot.current_video_render_id = video_render.id
+    _set_storyboard_status(shot, StoryboardStatus.SUCCEEDED, "当前镜头状态不可切换到成功视频版本")
+
+
 def advance_to_rendering(project: Project) -> None:
     current = ProjectStageRaw(project.stage)
     if current == ProjectStageRaw.RENDERING:
         return
-    if current != ProjectStageRaw.SCENES_LOCKED:
-        raise InvalidTransition(current.value, ProjectStageRaw.RENDERING.value, "只有 scenes_locked 可进入 rendering")
+    if current not in {ProjectStageRaw.CHARACTERS_LOCKED, ProjectStageRaw.SCENES_LOCKED}:
+        raise InvalidTransition(current.value, ProjectStageRaw.RENDERING.value, "只有 characters_locked/scenes_locked 可进入 rendering")
     project.stage = ProjectStageRaw.RENDERING.value
 
 

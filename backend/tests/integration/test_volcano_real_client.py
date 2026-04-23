@@ -1,4 +1,5 @@
 import asyncio
+import json
 import pytest
 import respx
 import httpx
@@ -62,6 +63,30 @@ async def test_image_success(patched_settings, respx_mock):
     c = RealVolcanoClient()
     resp = await c.image_generations("doubao-seedream-5.0-lite", "cat")
     assert resp["data"][0]["url"].startswith("https://")
+
+
+@pytest.mark.asyncio
+async def test_image_with_references_uses_prompt_and_image_array(patched_settings, respx_mock):
+    route = respx_mock.post(url__regex=r".*/images/generations").mock(
+        return_value=httpx.Response(200, json={
+            "data": [{"url": "https://xxx/1.png", "size": "1152x864"}],
+            "usage": {"generated_images": 1},
+        })
+    )
+    c = RealVolcanoClient()
+    await c.image_generations(
+        "doubao-seedream-4-0-250828",
+        "cat",
+        references=["https://example.com/ref-1.png", "https://example.com/ref-2.png"],
+        size="1024x1792",
+    )
+
+    sent = route.calls[0].request.content.decode("utf-8")
+    body = json.loads(sent)
+    assert body["prompt"] == "cat"
+    assert body["image"] == ["https://example.com/ref-1.png", "https://example.com/ref-2.png"]
+    assert "content" not in body
+    assert body["size"] == "1024x1792"
 
 
 @pytest.mark.asyncio

@@ -133,6 +133,10 @@ backend/
 | `setup_params` | JSON | 时代/视觉/输出目标 |
 | `overview` | TEXT | |
 | `suggested_shots` | SMALLINT | 系统建议镜头数 |
+| `character_prompt_profile_draft` | JSON NULL | 角色统一视觉设定草稿 |
+| `character_prompt_profile_applied` | JSON NULL | 角色统一视觉设定已应用版本 |
+| `scene_prompt_profile_draft` | JSON NULL | 场景统一视觉设定草稿 |
+| `scene_prompt_profile_applied` | JSON NULL | 场景统一视觉设定已应用版本 |
 | `created_at` / `updated_at` | DATETIME | |
 
 ### 4.2 `storyboards` — 分镜镜头
@@ -164,8 +168,8 @@ backend/
 | `role_type` | ENUM('protagonist','supporting','atmosphere') | |
 | `is_protagonist` | BOOL | 应用层保证项目内最多 1 个 |
 | `summary` | VARCHAR(255) | 卡片摘要 |
-| `description` | TEXT | 角色描述 string(生成 prompt 用) |
-| `meta` | JSON | 主视角/动态特征/一致性约束 |
+| `description` | TEXT | 角色描述 string(生成 prompt 用),但不应单独承担全部视觉约束 |
+| `meta` | JSON | 主视角/动态特征/一致性约束;后续可承载稳定辨识点/服装层次/不可漂移特征 |
 | `reference_image_url` | VARCHAR(512) | |
 | `video_style_ref` | JSON | 视频形象参考 |
 | `locked` | BOOL DEFAULT FALSE | 主角确认锁定后置 TRUE |
@@ -180,8 +184,8 @@ backend/
 | `name` | VARCHAR(64) | |
 | `theme` | VARCHAR(32) | `theme-palace` / `theme-academy` / `theme-harbor` |
 | `summary` | VARCHAR(255) | |
-| `description` | TEXT | 场景描述 string |
-| `meta` | JSON | |
+| `description` | TEXT | 场景描述 string,但不应单独承担全部空间约束 |
+| `meta` | JSON | 可补充关键结构/空间层次/时代元素等场景母版锚点 |
 | `reference_image_url` | VARCHAR(512) | |
 | `video_style_ref` | JSON | |
 | `template_id` | VARCHAR(64) NULL | 若由模板派生,记录模板 key |
@@ -205,7 +209,7 @@ backend/
 | `shot_id` | CHAR(26) FK, INDEX | |
 | `version_no` | INT | 同一 shot 内自增 |
 | `status` | ENUM('queued','running','succeeded','failed') | |
-| `prompt_snapshot` | JSON | 本次生成的角色/场景/镜头 prompt 全快照 |
+| `prompt_snapshot` | JSON | 本次生成的角色/场景/镜头 prompt 全快照,建议同时保留项目级视觉规则摘要 |
 | `image_url` | VARCHAR(512) | 成功时结果 URL |
 | `provider_task_id` | VARCHAR(128) | 火山侧任务 ID |
 | `error_code` | VARCHAR(64) | |
@@ -399,7 +403,7 @@ pending → generating → succeeded → locked
 | POST | `/projects/{id}/scenes/{sid}/regenerate` | 重新生成参考图 | ✅ job |
 | POST | `/projects/{id}/scenes/{sid}/lock` | 锁定场景 | — |
 | POST | `/projects/{id}/shots/render` | 批量生成全部镜头 | ✅ job (总 + 子) |
-| POST | `/projects/{id}/shots/{shot_id}/render-draft` | 生成单镜头 render draft(建议 prompt + references) | — |
+| POST | `/projects/{id}/shots/{shot_id}/render-draft` | 生成单镜头 render draft(建议 prompt + references,应继承项目级视觉设定) | — |
 | POST | `/projects/{id}/shots/{shot_id}/render` | 单镜头生成/重试 | ✅ job |
 | POST | `/projects/{id}/shots/{shot_id}/renders/{render_id}/select` | 把历史版本切为当前 | — |
 | POST | `/projects/{id}/shots/{shot_id}/lock` | 锁定为最终版 | — |
@@ -542,6 +546,12 @@ Content-Type: application/json
 - 该接口只负责创建 `render_batch` 父 job + 若干 `render_shot` 子 job,不在 HTTP 线程内同步生成图片
 - 子 job 与父 job 通过 `jobs.parent_job_id` 建立关系
 - 单镜头 render 的实际输入来自此前由 `POST /projects/{id}/shots/{shot_id}/render-draft` 生成、并由用户确认提交的 `prompt + references`
+- `render-draft` 的建议 prompt 应由 4 类信息共同组成:
+  - shot 自身文案(`title / description / detail / tags`)
+  - 已确认的角色项目级视觉设定
+  - 已确认的场景项目级视觉设定
+  - 当前推荐 references 的角色/场景资产
+- 后端不新增独立的 storyboard prompt profile 资源,而是让镜头层复用项目级视觉规则,避免配置体系膨胀
 
 #### 6.3.7 发起导出
 
@@ -660,6 +670,7 @@ Content-Type: application/json
 - `shot_renders.prompt_snapshot` 中建议同时保存:
   - `reference_image_key` / `image_key` 这类稳定引用
   - 渲染当次使用的 prompt / references 摘要
+  - 项目级视觉规则摘要(如 world/style/palette/negative rules),便于后续排查风格漂移
 
 ### 8.3 清理策略
 
@@ -790,7 +801,7 @@ services:
 | `characters` | `CharacterAsset[]` | 见下表 | |
 | `scenes` | `SceneAsset[]` | 见下表 | |
 | `generationProgress` | string | `` `${succeeded} / ${total} 已完成` `` | 服务端计算 |
-| `generationNotes` | `{input,suggestion}` | `{ input: 最近一次 render 的 prompt_snapshot 摘要, suggestion: AI 或规则生成的下一轮优化建议 }` | MVP `suggestion` 可先写固定规则,后期走 LLM |
+| `generationNotes` | `{input,suggestion}` | `{ input: 最近一次 render 的 prompt_snapshot 摘要, suggestion: AI 或规则生成的下一轮优化建议 }` | `suggestion` 生成时应优先围绕项目级视觉设定、角色/场景锚点、单镜头站位与运镜约束组织,而不是只堆砌形容词 |
 | `generationQueue` | `RenderQueueItem[]` | 取项目下活跃/最近的 jobs,其中 `kind=render_shot` 的项追加 render metadata | 见下表 |
 | `exportConfig` | string[] | `export_tasks` 最新任务的 config 展平 | `["比例:9:16","分辨率:1080 x 1920",...]` |
 | `exportDuration` | string | `"预计成片时长:" + Σ(duration_sec) + " 秒"` | |

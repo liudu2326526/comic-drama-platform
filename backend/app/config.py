@@ -36,7 +36,15 @@ class Settings(BaseSettings):
     # 真实火山配置 (Task 1 新增)
     ark_chat_model: str = "doubao-seed-2-0-pro-260215"
     ark_image_model: str = "doubao-seedream-4-0-250828"
+    ark_video_model_standard: str = "doubao-seedance-2-0-260128"
+    ark_video_model_fast: str = "doubao-seedance-2-0-fast-260128"
     ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    ark_video_default_duration: int = 5
+    ark_video_default_resolution: str = "720p"
+    ark_video_generate_audio: bool = False
+    ark_video_watermark: bool = False
+    ark_video_return_last_frame: bool = True
+    ark_video_execution_expires_after: int = 3600
 
     # 人像库(AK/SK HMAC)
     volc_access_key_id: str = ""

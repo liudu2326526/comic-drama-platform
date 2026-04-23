@@ -1,13 +1,17 @@
 import pytest
+from sqlalchemy import select
+import importlib
 
 from app.api.errors import ApiError
-from app.domain.models import Character, Job, Project, Scene, ShotRender, StoryboardShot
+from app.domain.models import Character, Job, Project, Scene, ShotDraft, ShotRender, StoryboardShot
 from app.domain.schemas.shot_render import RenderSubmitRequest
 from app.domain.services.job_service import JobService
 from app.domain.services.shot_render_service import ShotRenderService
 from app.infra.ulid import new_id
 from app.pipeline.states import ProjectStageRaw
-from app.pipeline.transitions import InvalidTransition
+
+
+gen_shot_draft_module = importlib.import_module("app.tasks.ai.gen_shot_draft")
 
 
 async def seed_renderable_project(session):
@@ -29,18 +33,15 @@ async def seed_renderable_project(session):
         theme="palace",
         summary="大殿",
         description="金色宫殿",
-        locked=True,
         reference_image_url="projects/p/scene/20260422/s.png",
     )
     character = Character(
         id=new_id(),
         project_id=project.id,
         name="秦昭",
-        role_type="protagonist",
-        is_protagonist=True,
+        role_type="supporting",
         summary="少年天子",
         description="黑发金冠",
-        locked=True,
         reference_image_url="projects/p/character/20260422/c.png",
     )
     shot = StoryboardShot(
@@ -67,7 +68,7 @@ async def test_build_render_draft_returns_prompt_and_references(db_session):
 
     assert draft["shot_id"] == shot.id
     assert "图片1" in draft["prompt"]
-    assert draft["references"]
+    assert len(draft["references"]) == 2
     assert any(item["kind"] == "scene" for item in draft["references"])
     assert all(item["image_url"] for item in draft["references"])
 
@@ -119,19 +120,158 @@ async def test_create_render_version_from_confirmed_payload_increments_version(d
 
 
 @pytest.mark.asyncio
-async def test_post_render_draft_returns_prompt_and_references(client, db_session, monkeypatch):
+async def test_post_render_draft_returns_job_ack(client, db_session, monkeypatch):
     project, shot = await seed_renderable_project(db_session)
+    project.stage = ProjectStageRaw.CHARACTERS_LOCKED.value
+    await db_session.commit()
+
+    class _Message:
+        content = (
+            '{"prompt":"用于视频生成的镜头草稿","reference_ids":[],"optimizer_notes":{"issues":["动作细节不足"]}}'
+        )
+
+    class _Choice:
+        message = _Message()
+
+    class _Response:
+        choices = [_Choice()]
+
+    class FakeClient:
+        async def chat_completions(self, *args, **kwargs):
+            return _Response()
+
+    monkeypatch.setattr(gen_shot_draft_module, "get_volcano_client", lambda: FakeClient())
+
     resp = await client.post(f"/api/v1/projects/{project.id}/shots/{shot.id}/render-draft")
     assert resp.status_code == 200
     data = resp.json()["data"]
+    assert data["job_id"]
+    assert data["sub_job_ids"] == []
+
+    job = await db_session.get(Job, data["job_id"])
+    assert job is not None
+    assert job.kind == "gen_shot_draft"
+    assert job.status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_get_render_draft_returns_null_when_absent(client, db_session):
+    project, shot = await seed_renderable_project(db_session)
+    project.stage = ProjectStageRaw.CHARACTERS_LOCKED.value
+    await db_session.commit()
+
+    resp = await client.get(f"/api/v1/projects/{project.id}/shots/{shot.id}/render-draft")
+
+    assert resp.status_code == 200
+    assert resp.json()["data"] is None
+
+
+@pytest.mark.asyncio
+async def test_post_render_draft_in_eager_mode_persists_latest_draft(client, db_session, monkeypatch):
+    project, shot = await seed_renderable_project(db_session)
+    project.stage = ProjectStageRaw.CHARACTERS_LOCKED.value
+    await db_session.commit()
+
+    class _Message:
+        content = (
+            '{"prompt":"用于视频生成的镜头草稿","reference_ids":[],"optimizer_notes":{"principles":["Seedance 角色一致性"]}}'
+        )
+
+    class _Choice:
+        message = _Message()
+
+    class _Response:
+        choices = [_Choice()]
+
+    class FakeClient:
+        async def chat_completions(self, *args, **kwargs):
+            return _Response()
+
+    monkeypatch.setattr(gen_shot_draft_module, "get_volcano_client", lambda: FakeClient())
+
+    resp = await client.post(f"/api/v1/projects/{project.id}/shots/{shot.id}/render-draft")
+
+    assert resp.status_code == 200
+    rows = (
+        await db_session.execute(
+            select(ShotDraft).where(ShotDraft.shot_id == shot.id)
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].prompt == "用于视频生成的镜头草稿"
+
+    get_resp = await client.get(f"/api/v1/projects/{project.id}/shots/{shot.id}/render-draft")
+    data = get_resp.json()["data"]
     assert data["shot_id"] == shot.id
-    assert data["prompt"]
+    assert data["prompt"] == "用于视频生成的镜头草稿"
     assert data["references"]
+    assert data["optimizer_snapshot"]["principles"] == ["Seedance 角色一致性"]
+
+
+@pytest.mark.asyncio
+async def test_get_render_draft_returns_latest_version_when_multiple_drafts_exist(client, db_session):
+    project, shot = await seed_renderable_project(db_session)
+    project.stage = ProjectStageRaw.CHARACTERS_LOCKED.value
+    await db_session.flush()
+    db_session.add_all(
+        [
+            ShotDraft(
+                shot_id=shot.id,
+                version_no=1,
+                prompt="第一版镜头草稿",
+                references_snapshot=[{"id": "scene:first", "name": "长安殿"}],
+                optimizer_snapshot={"principles": ["v1"]},
+                source_snapshot={"shot_id": shot.id},
+            ),
+            ShotDraft(
+                shot_id=shot.id,
+                version_no=2,
+                prompt="第二版镜头草稿",
+                references_snapshot=[{"id": "scene:latest", "name": "养心阁"}],
+                optimizer_snapshot={"principles": ["v2"]},
+                source_snapshot={"shot_id": shot.id},
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    resp = await client.get(f"/api/v1/projects/{project.id}/shots/{shot.id}/render-draft")
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["version_no"] == 2
+    assert data["prompt"] == "第二版镜头草稿"
+    assert data["references"][0]["id"] == "scene:latest"
+    assert data["optimizer_snapshot"]["principles"] == ["v2"]
+
+
+@pytest.mark.asyncio
+async def test_post_render_draft_conflicts_when_existing_job_running(client, db_session):
+    project, shot = await seed_renderable_project(db_session)
+    project.stage = ProjectStageRaw.CHARACTERS_LOCKED.value
+    db_session.add(
+        Job(
+            project_id=project.id,
+            kind="gen_shot_draft",
+            target_type="shot",
+            target_id=shot.id,
+            status="running",
+            payload={"shot_id": shot.id},
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.post(f"/api/v1/projects/{project.id}/shots/{shot.id}/render-draft")
+
+    assert resp.status_code == 409
+    assert resp.json()["code"] == 40901
 
 
 @pytest.mark.asyncio
 async def test_post_single_shot_render_returns_job_and_render(client, db_session, monkeypatch, settings):
     project, shot = await seed_renderable_project(db_session)
+    project.stage = ProjectStageRaw.CHARACTERS_LOCKED.value
+    await db_session.commit()
     original_eager = settings.celery_task_always_eager
     settings.celery_task_always_eager = False
     try:
@@ -254,6 +394,7 @@ async def test_first_render_request_advances_scenes_locked_to_rendering(db_sessi
     from app.domain.services.shot_render_service import ShotRenderService
 
     project, shot = await seed_renderable_project(db_session)
+    project.stage = ProjectStageRaw.CHARACTERS_LOCKED.value
     await ShotRenderService(db_session).create_render_version(
         project.id,
         shot.id,
@@ -387,26 +528,28 @@ async def test_project_jobs_list_exposes_target_and_payload_for_render_recovery(
 
 
 @pytest.mark.asyncio
-async def test_build_render_draft_filters_locked_characters(db_session):
+async def test_build_render_draft_includes_candidates_without_locking(db_session):
     project, shot = await seed_renderable_project(db_session)
-    # 创建一个未锁定的角色
-    unlocked_char = Character(
+    extra_scene = Scene(
         id=new_id(),
         project_id=project.id,
-        name="未锁定角色",
+        name="偏殿",
+        reference_image_url="projects/p/scene/extra.png",
+    )
+    extra_char = Character(
+        id=new_id(),
+        project_id=project.id,
+        name="额外角色",
         role_type="supporting",
-        locked=False,
         reference_image_url="projects/p/character/unlocked.png",
     )
-    db_session.add(unlocked_char)
+    db_session.add_all([extra_scene, extra_char])
     await db_session.commit()
 
     svc = ShotRenderService(db_session)
     draft = await svc.build_render_draft(project.id, shot.id)
-    # 应该只有 seed_renderable_project 里的那个已锁定角色
-    char_refs = [r for r in draft["references"] if r["kind"] == "character"]
-    assert len(char_refs) == 1
-    assert char_refs[0]["name"] == "秦昭"
+    assert {r["name"] for r in draft["references"] if r["kind"] == "character"} == {"秦昭", "额外角色"}
+    assert {r["name"] for r in draft["references"] if r["kind"] == "scene"} == {"长安殿", "偏殿"}
 
 
 @pytest.mark.asyncio
@@ -483,3 +626,37 @@ async def test_aggregate_service_includes_recent_finished_jobs(client, db_sessio
     assert any(j["id"] == job.id for j in detail.generationQueue)
     # generationNotes.input 应该反映这个 render 的快照
     assert "历史快照" in detail.generationNotes["input"]
+
+
+@pytest.mark.asyncio
+async def test_aggregate_service_tolerates_render_job_with_null_result(db_session):
+    from app.domain.services.aggregate_service import AggregateService
+
+    project, shot = await seed_renderable_project(db_session)
+    render = ShotRender(
+        id=new_id(),
+        shot_id=shot.id,
+        version_no=1,
+        status="running",
+        prompt_snapshot={"prompt": "排队中的镜头", "references": []},
+    )
+    db_session.add(render)
+    await db_session.flush()
+
+    job = await JobService(db_session).create_job(
+        project_id=project.id,
+        kind="render_shot",
+        target_type="shot",
+        target_id=shot.id,
+        payload={"render_id": render.id},
+    )
+    job.status = "running"
+    job.progress = 5
+    job.result = None
+    await db_session.commit()
+
+    detail = await AggregateService(db_session).get_project_detail(project.id)
+
+    queue_row = next(item for item in detail.generationQueue if item["id"] == job.id)
+    assert queue_row["render_id"] == render.id
+    assert queue_row["shot_id"] == shot.id

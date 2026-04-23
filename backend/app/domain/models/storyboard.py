@@ -32,5 +32,6 @@ class StoryboardShot(Base, TimestampMixin):
         default="pending",
     )
     current_render_id: Mapped[str | None] = mapped_column(CHAR(26), nullable=True)
+    current_video_render_id: Mapped[str | None] = mapped_column(CHAR(26), nullable=True)
     # scene_id 的 FK 约束在 Alembic 0002 里显式加(需要 scenes 先建好)
     scene_id: Mapped[str | None] = mapped_column(CHAR(26), nullable=True)

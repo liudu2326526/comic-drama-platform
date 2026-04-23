@@ -1,31 +1,39 @@
-import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.api.envelope import Envelope
-from app.api.errors import CONTENT_FILTER, ApiError
+from app.api.errors import ApiError
 from app.deps import get_db
 from app.domain.models import Project, Scene, Job
 from app.domain.schemas.scene import (
     SceneOut, 
     SceneUpdate, 
     SceneGenerateRequest, 
-    SceneLockRequest,
-    SceneLockResponse,
     GenerateJobAck
 )
 from app.domain.services.scene_service import SceneService
-from app.infra import get_volcano_client
-from app.infra.volcano_errors import VolcanoContentFilterError
-from app.pipeline.states import ProjectStageRaw
-from app.pipeline.transitions import assert_asset_editable, update_job_progress, InvalidTransition
+from app.pipeline.transitions import advance_to_scenes_locked, assert_asset_editable, InvalidTransition
 from app.tasks.ai.gen_scene_asset import gen_scene_asset
-from app.config import get_settings
 
 router = APIRouter(prefix="/projects/{project_id}/scenes", tags=["scenes"])
 logger = logging.getLogger(__name__)
+
+
+def _to_scene_out(scene: Scene) -> SceneOut:
+    return SceneOut(
+        id=scene.id,
+        name=scene.name,
+        theme=scene.theme,
+        summary=scene.summary,
+        description=scene.description,
+        meta=[],
+        locked=False,
+        template_id=scene.template_id,
+        reference_image_url=scene.reference_image_url,
+        usage="",
+    )
 
 @router.get("", response_model=Envelope[list[SceneOut]])
 async def list_scenes(
@@ -33,20 +41,7 @@ async def list_scenes(
     db: AsyncSession = Depends(get_db)
 ):
     scenes = await SceneService.list_by_project(db, project_id)
-    out = [
-        SceneOut(
-            id=s.id,
-            name=s.name,
-            theme=s.theme,
-            summary=s.summary,
-            description=s.description,
-            meta=[], # TODO
-            locked=s.locked,
-            template_id=s.template_id,
-            reference_image_url=s.reference_image_url,
-            usage="" # TODO: 拼装用法统计
-        ) for s in scenes
-    ]
+    out = [_to_scene_out(s) for s in scenes]
     return Envelope.success(out)
 
 @router.post("/generate", response_model=Envelope[GenerateJobAck])
@@ -87,30 +82,21 @@ async def update_scene(
     except InvalidTransition as e:
         raise ApiError(40301, str(e), http_status=403)
     
-    return Envelope.success(SceneOut(
-        id=scene.id, name=scene.name, theme=scene.theme,
-        summary=scene.summary, description=scene.description,
-        meta=[], locked=scene.locked, template_id=scene.template_id,
-        reference_image_url=scene.reference_image_url, usage=""
-    ))
+    return Envelope.success(_to_scene_out(scene))
 
-@router.post("/{sid}/lock", response_model=Envelope[SceneLockResponse])
-async def lock_scene(
+@router.post("/confirm", response_model=Envelope[dict])
+async def confirm_scenes_stage(
     project_id: str = Path(..., description="项目 ID"),
-    sid: str = Path(..., description="场景 ID"),
-    req: SceneLockRequest = None,
     db: AsyncSession = Depends(get_db)
 ):
     project = await db.get(Project, project_id)
-    scene = await SceneService.get_by_id(db, sid)
-    if not project or not scene or scene.project_id != project_id:
-        raise ApiError(40401, "资源不存在", http_status=404)
+    if not project:
+        raise ApiError(40401, "项目不存在", http_status=404)
     
     try:
-        job_id = await SceneService.lock_async(db, project, scene)
-        return Envelope.success(SceneLockResponse(
-            job_id=job_id
-        ))
+        await advance_to_scenes_locked(db, project)
+        await db.commit()
+        return Envelope.success({"stage": project.stage, "stage_raw": project.stage})
     except InvalidTransition as e:
         raise ApiError(40301, str(e), http_status=403)
 

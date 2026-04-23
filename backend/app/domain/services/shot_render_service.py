@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.errors import ApiError
 from app.domain.models import Character, Project, Scene, ShotRender, StoryboardShot
 from app.domain.schemas.shot_render import RenderSubmitRequest
+from app.domain.services.reference_candidates import build_reference_candidates
 from app.infra.asset_store import build_asset_url
 from app.pipeline.states import ProjectStageRaw
 from app.pipeline.transitions import (
@@ -19,6 +20,7 @@ from app.pipeline.transitions import (
 
 
 RENDERABLE_STAGES = {
+    ProjectStageRaw.CHARACTERS_LOCKED.value,
     ProjectStageRaw.SCENES_LOCKED.value,
     ProjectStageRaw.RENDERING.value,
 }
@@ -43,19 +45,19 @@ class ShotRenderService:
     async def build_render_draft(self, project_id: str, shot_id: str) -> dict:
         project = await self._get_project(project_id)
         if project.stage not in RENDERABLE_STAGES:
-            raise InvalidTransition(project.stage, "render_draft", "只有 scenes_locked/rendering 阶段允许生成镜头草稿")
+            raise InvalidTransition(project.stage, "render_draft", "只有 characters_locked/scenes_locked/rendering 阶段允许生成镜头草稿")
 
         shot = await self._get_shot(project_id, shot_id)
         scenes = (
             await self.session.execute(
-                select(Scene).where(Scene.project_id == project_id, Scene.locked.is_(True)).order_by(Scene.updated_at.desc())
+                select(Scene).where(Scene.project_id == project_id).order_by(Scene.updated_at.desc())
             )
         ).scalars().all()
         characters = (
             await self.session.execute(
                 select(Character)
-                .where(Character.project_id == project_id, Character.locked.is_(True))
-                .order_by(Character.is_protagonist.desc(), Character.created_at)
+                .where(Character.project_id == project_id)
+                .order_by(Character.created_at)
             )
         ).scalars().all()
         references = self._select_references(shot, scenes, characters)
@@ -70,7 +72,7 @@ class ShotRenderService:
     ) -> ShotRender:
         project = await self._get_project(project_id)
         if project.stage not in RENDERABLE_STAGES:
-            raise InvalidTransition(project.stage, "render_shot", "只有 scenes_locked/rendering 阶段允许单镜头渲染")
+            raise InvalidTransition(project.stage, "render_shot", "只有 characters_locked/scenes_locked/rendering 阶段允许单镜头渲染")
 
         shot = (
             await self.session.execute(
@@ -120,32 +122,7 @@ class ShotRenderService:
         return build_asset_url(value)
 
     def _select_references(self, shot: StoryboardShot, scenes: list[Scene], characters: list[Character]) -> list[dict]:
-        return [
-            *[
-                {
-                    "id": f"scene:{scene.id}",
-                    "kind": "scene",
-                    "source_id": scene.id,
-                    "name": scene.name,
-                    "image_url": self._asset_ref(scene.reference_image_url),
-                    "reason": "镜头文案命中该场景",
-                }
-                for scene in scenes
-                if self._asset_ref(scene.reference_image_url)
-            ][:1],
-            *[
-                {
-                    "id": f"character:{c.id}",
-                    "kind": "character",
-                    "source_id": c.id,
-                    "name": c.name,
-                    "image_url": self._asset_ref(c.reference_image_url),
-                    "reason": "主角/出场角色一致性参考",
-                }
-                for c in characters
-                if self._asset_ref(c.reference_image_url)
-            ][:2],
-        ]
+        return build_reference_candidates(shot, scenes, characters, self._asset_ref)
 
     def _build_draft_prompt(self, shot: StoryboardShot, references: list[dict]) -> str:
         ref_descriptions = []

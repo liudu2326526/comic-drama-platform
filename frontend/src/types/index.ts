@@ -3,14 +3,18 @@ import type {
   CharacterRoleType,
   ProjectStageRaw,
   ProjectStageZh,
+  RenderSubmitReference,
   SceneThemeRaw,
+  ShotVideoDurationPreset,
+  ShotVideoModelType,
+  ShotVideoResolution,
   StoryboardDetail
 } from "./api";
 
 export type RenderStatus = "success" | "processing" | "warning" | "failed";
 
 /** 分镜卡片展示对象,对齐后端聚合接口与 StoryboardDetail(idx/duration_sec/scene_id 等字段)。 */
-export interface StoryboardShot extends StoryboardDetail {}
+export type StoryboardShot = StoryboardDetail;
 
 export interface CharacterAsset {
   id: string;
@@ -46,12 +50,24 @@ export interface RenderQueueItem {
   shot_id?: string | null;
   render_id?: string | null;
   image_url?: string | null;
+  video_render_id?: string | null;
+  video_url?: string | null;
+  last_frame_url?: string | null;
   version_no?: number | null;
   shot_status?: string | null;
+  params_snapshot?: Record<string, unknown> | null;
   error_code?: string | null;
   error_msg?: string | null;
   title?: string;
   summary?: string;
+}
+
+export interface VideoGenerationDraft {
+  prompt: string;
+  references: RenderSubmitReference[];
+  duration: ShotVideoDurationPreset | null;
+  resolution: ShotVideoResolution;
+  modelType: ShotVideoModelType;
 }
 
 export interface RenderShotItem {
@@ -62,9 +78,13 @@ export interface RenderShotItem {
   status: RenderStatus;
   progress: number;
   currentRenderId: string | null;
+  currentVideoRenderId: string | null;
   imageUrl: string | null;
+  videoUrl: string | null;
+  lastFrameUrl: string | null;
   versionNo: number | null;
   activeJobId: string | null;
+  paramsSnapshot?: Record<string, unknown> | null;
   errorCode: string | null;
   errorMsg: string | null;
 }

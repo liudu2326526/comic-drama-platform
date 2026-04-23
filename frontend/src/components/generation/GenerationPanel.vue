@@ -3,83 +3,110 @@ import { computed, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import PanelSection from "@/components/common/PanelSection.vue";
 import ProgressBar from "@/components/common/ProgressBar.vue";
-import RenderRetryBanner from "@/components/generation/RenderRetryBanner.vue";
 import RenderVersionHistory from "@/components/generation/RenderVersionHistory.vue";
 import { useWorkbenchStore } from "@/store/workbench";
 import { useStageGate } from "@/composables/useStageGate";
 import { useJobPolling } from "@/composables/useJobPolling";
 import { useToast } from "@/composables/useToast";
 import { ApiError, messageFor } from "@/utils/error";
-import type { RenderSubmitReference } from "@/types/api";
+import type {
+  RenderSubmitReference,
+  ShotVideoDurationPreset,
+  ShotVideoModelType,
+  ShotVideoResolution,
+  ShotVideoVersionRead,
+} from "@/types/api";
 
 const store = useWorkbenchStore();
 const {
   current,
   selectedShotId,
   renderShots,
+  activeDraftJobId,
+  activeDraftShotId,
   activeRenderJobId,
   activeRenderShotId,
   renderHistoryLoadingShotId,
-  renderError
 } = storeToRefs(store);
 const { flags } = useStageGate();
 const toast = useToast();
 
-const draftPrompt = ref("");
-const draftReferences = ref<RenderSubmitReference[]>([]);
 const historyOpen = ref(false);
 const submitting = ref(false);
 const loadingDraft = ref(false);
+const draftPrompt = ref("");
+const draftReferences = ref<RenderSubmitReference[]>([]);
 
 const selectedRenderShot = computed(
-  () =>
-    renderShots.value.find((item) => item.shotId === selectedShotId.value) ??
-    renderShots.value[0] ??
-    null
+  () => renderShots.value.find((item) => item.shotId === selectedShotId.value) ?? renderShots.value[0] ?? null
 );
-
-const selectedVersions = computed(() =>
-  selectedRenderShot.value ? store.renderVersionsFor(selectedRenderShot.value.shotId) : []
+const selectedDraft = computed(() =>
+  selectedRenderShot.value ? store.renderDraftFor(selectedRenderShot.value.shotId) : null
 );
-
-const currentVersion = computed(() =>
-  selectedVersions.value.find((item) => item.is_current) ?? selectedVersions.value[0] ?? null
+const selectedVideoOptions = computed(() =>
+  selectedRenderShot.value ? store.videoDraftOptionsFor(selectedRenderShot.value.shotId) : null
 );
-
-const previewImageUrl = computed(
-  () => currentVersion.value?.image_url ?? selectedRenderShot.value?.imageUrl ?? null
+const selectedVersions = computed<ShotVideoVersionRead[]>(() =>
+  selectedRenderShot.value ? store.videoVersionsFor(selectedRenderShot.value.shotId) : []
 );
-
-const promptSnapshotText = computed(() =>
-  currentVersion.value?.prompt_snapshot
-    ? JSON.stringify(currentVersion.value.prompt_snapshot, null, 2)
-    : current.value?.generationNotes?.input ?? ""
+const currentVideoVersion = computed(
+  () => selectedVersions.value.find((item) => item.is_current) ?? selectedVersions.value[0] ?? null
 );
-
-const versionErrorCode = computed(
-  () => currentVersion.value?.error_code ?? selectedRenderShot.value?.errorCode ?? null
+const currentParams = computed(() => {
+  if (currentVideoVersion.value?.params_snapshot) {
+    return toVideoParamSummary(currentVideoVersion.value.params_snapshot);
+  }
+  return selectedRenderShot.value ? store.videoDraftOptionsFor(selectedRenderShot.value.shotId) : null;
+});
+const previewVideoUrl = computed(
+  () => currentVideoVersion.value?.video_url ?? selectedRenderShot.value?.videoUrl ?? null
 );
-const versionErrorMsg = computed(
-  () => currentVersion.value?.error_msg ?? selectedRenderShot.value?.errorMsg ?? renderError.value ?? null
+const showVideoGeneratingBanner = computed(() =>
+  Boolean(
+    previewVideoUrl.value &&
+    activeRenderJobId.value &&
+    activeRenderShotId.value === selectedRenderShot.value?.shotId
+  )
 );
 const renderProgress = computed(() => {
   if (activeRenderShotId.value !== selectedRenderShot.value?.shotId) return 0;
   return selectedRenderShot.value?.progress ?? 0;
 });
-const isOtherShotRendering = computed(
-  () => !!activeRenderJobId.value && activeRenderShotId.value !== selectedRenderShot.value?.shotId
+const generateVideoDisabled = computed(() => {
+  if (!selectedRenderShot.value || !selectedDraft.value || !flags.value.canRender) return true;
+  const isActiveShot = !!activeRenderJobId.value && activeRenderShotId.value === selectedRenderShot.value.shotId;
+  return isActiveShot || !selectedDraft.value.prompt.trim() || selectedDraft.value.references.length === 0;
+});
+const generateVideoButtonText = computed(() => {
+  if (submitting.value || (activeRenderJobId.value && activeRenderShotId.value === selectedRenderShot.value?.shotId)) {
+    return "视频生成中...";
+  }
+  return currentVideoVersion.value?.video_url ? "重新生成视频" : "生成视频";
+});
+const generateDraftDisabled = computed(() =>
+  !flags.value.canRender || loadingDraft.value || Boolean(activeDraftJobId.value)
 );
-const disableDraftActions = computed(
-  () => !flags.value.canRender || !selectedRenderShot.value || isOtherShotRendering.value
+const generateDraftButtonText = computed(() =>
+  loadingDraft.value || activeDraftJobId.value ? "草稿生成中..." : "生成草稿"
 );
-const confirmDisabled = computed(
-  () =>
-    disableDraftActions.value ||
-    loadingDraft.value ||
-    submitting.value ||
-    !draftPrompt.value.trim() ||
-    draftReferences.value.length === 0
+const hasEnteredRenderPhase = computed(() =>
+  ["scenes_locked", "rendering", "ready_for_export", "exported"].includes(current.value?.stage_raw ?? "")
 );
+const renderBlockedMessage = computed(() => {
+  const stage = current.value?.stage_raw;
+  if (stage === "draft") return "请先完成小说解析与分镜生成后再进入镜头生成。";
+  if (stage === "storyboard_ready") return "请先完成角色设定，并确认进入场景设定。";
+  if (stage === "characters_locked") return "请先完成场景设定，并确认进入镜头生成。";
+  return "当前阶段暂不可生成镜头草稿。";
+});
+
+function toVideoParamSummary(snapshot: Record<string, unknown>) {
+  return {
+    duration: snapshot.duration == null ? null : Number(snapshot.duration),
+    resolution: String(snapshot.resolution ?? "480p") as ShotVideoResolution,
+    modelType: String(snapshot.model_type ?? "fast") as ShotVideoModelType,
+  };
+}
 
 function syncDraftFromStore() {
   const shotId = selectedRenderShot.value?.shotId;
@@ -95,32 +122,75 @@ function syncDraftFromStore() {
     kind: item.kind,
     source_id: item.source_id,
     name: item.name,
-    image_url: item.image_url
+    image_url: item.image_url,
   }));
 }
 
 watch(
   () => selectedRenderShot.value?.shotId,
-  () => {
-    syncDraftFromStore();
-  },
-  { immediate: true }
-);
-
-watch(
-  () => selectedRenderShot.value?.shotId,
   async (shotId) => {
+    syncDraftFromStore();
     if (!shotId) return;
-    if (!store.renderVersionsFor(shotId).length) {
+    if (!store.renderDraftFor(shotId)) {
       try {
-        await store.fetchRenderVersions(shotId);
+        const draft = await store.fetchRenderDraft(shotId);
+        draftPrompt.value = draft.prompt;
+        draftReferences.value = draft.references.map((item) => ({
+          id: item.id,
+          kind: item.kind,
+          source_id: item.source_id,
+          name: item.name,
+          image_url: item.image_url,
+        }));
       } catch {
-        // 保持静默，避免切换镜头时连续弹错
+        // noop
+      }
+    }
+    if (!store.videoVersionsFor(shotId).length) {
+      try {
+        await store.fetchVideoVersions(shotId);
+      } catch {
+        // noop
       }
     }
   },
   { immediate: true }
 );
+
+useJobPolling(activeDraftJobId, {
+  onProgress: () => void 0,
+  onSuccess: async () => {
+    const shotId = activeDraftShotId.value;
+    if (!shotId) {
+      return;
+    }
+    try {
+      const draft = await store.fetchRenderDraft(shotId);
+      draftPrompt.value = draft.prompt;
+      draftReferences.value = draft.references.map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        source_id: item.source_id,
+        name: item.name,
+        image_url: item.image_url,
+      }));
+      store.markDraftSucceeded(shotId);
+      toast.success("草稿生成完成");
+    } catch (e) {
+      const msg = e instanceof ApiError ? messageFor(e.code, e.message) : "加载已保存草稿失败";
+      store.markDraftFailed(shotId, msg);
+      toast.error(msg);
+    }
+  },
+  onError: (j, err) => {
+    const shotId = activeDraftShotId.value;
+    const msg =
+      j?.error_msg ??
+      (err instanceof ApiError ? messageFor(err.code, err.message) : "生成草稿失败");
+    if (shotId) store.markDraftFailed(shotId, msg);
+    toast.error(msg);
+  }
+});
 
 useJobPolling(activeRenderJobId, {
   onProgress: () => void 0,
@@ -129,8 +199,8 @@ useJobPolling(activeRenderJobId, {
       const shotId = activeRenderShotId.value;
       await store.reload();
       store.markRenderSucceeded();
-      if (shotId) await store.fetchRenderVersions(shotId);
-      toast.success("镜头生成完成");
+      if (shotId) await store.fetchVideoVersions(shotId);
+      toast.success("视频生成完成");
     } catch (e) {
       store.markRenderFailed((e as Error).message);
     }
@@ -138,7 +208,7 @@ useJobPolling(activeRenderJobId, {
   onError: (j, err) => {
     const msg =
       j?.error_msg ??
-      (err instanceof ApiError ? messageFor(err.code, err.message) : "镜头生成失败");
+      (err instanceof ApiError ? messageFor(err.code, err.message) : "视频生成失败");
     store.markRenderFailed(msg);
     toast.error(msg);
   }
@@ -148,19 +218,24 @@ function selectShot(shotId: string) {
   store.selectShot(shotId);
 }
 
+function onPromptInput(value: string) {
+  if (!selectedRenderShot.value) return;
+  draftPrompt.value = value;
+  store.updateRenderDraft(selectedRenderShot.value.shotId, { prompt: value });
+}
+
+function removeReference(id: string) {
+  if (!selectedRenderShot.value) return;
+  draftReferences.value = draftReferences.value.filter((item) => item.id !== id);
+  store.updateRenderDraft(selectedRenderShot.value.shotId, { references: draftReferences.value as never });
+}
+
 async function generateDraft() {
-  if (!selectedRenderShot.value || disableDraftActions.value) return;
+  if (!selectedRenderShot.value || !flags.value.canRender) return;
   loadingDraft.value = true;
   try {
-    const draft = await store.fetchRenderDraft(selectedRenderShot.value.shotId);
-    draftPrompt.value = draft.prompt;
-    draftReferences.value = draft.references.map((item) => ({
-      id: item.id,
-      kind: item.kind,
-      source_id: item.source_id,
-      name: item.name,
-      image_url: item.image_url
-    }));
+    await store.generateRenderDraft(selectedRenderShot.value.shotId);
+    toast.info("已提交草稿生成任务");
   } catch (e) {
     toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "生成草稿失败");
   } finally {
@@ -168,38 +243,44 @@ async function generateDraft() {
   }
 }
 
-function removeReference(id: string) {
-  draftReferences.value = draftReferences.value.filter((item) => item.id !== id);
-}
-
-async function confirmRender() {
-  if (!selectedRenderShot.value || confirmDisabled.value) return;
-  if (!draftPrompt.value.trim()) {
-    toast.warning("请先补充镜头提示词");
-    return;
-  }
-  if (!draftReferences.value.length) {
-    toast.warning("至少保留 1 张参考图后才能确认生成");
-    return;
-  }
+async function generateVideo() {
+  if (!selectedRenderShot.value || generateVideoDisabled.value) return;
   submitting.value = true;
   try {
-    await store.confirmRenderShot(selectedRenderShot.value.shotId, {
+    store.updateRenderDraft(selectedRenderShot.value.shotId, {
       prompt: draftPrompt.value,
-      references: draftReferences.value
+      references: draftReferences.value as never,
     });
-    toast.info("已提交镜头生成");
+    await store.generateVideoFromDraft(selectedRenderShot.value.shotId);
+    toast.info("已提交视频生成任务");
   } catch (e) {
-    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "提交生成失败");
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "视频生成失败");
   } finally {
     submitting.value = false;
   }
 }
 
-async function handleSelectVersion(renderId: string) {
+function setDuration(duration: ShotVideoDurationPreset) {
+  if (!selectedRenderShot.value) return;
+  store.setVideoDraftOptions(selectedRenderShot.value.shotId, {
+    duration: selectedVideoOptions.value?.duration === duration ? null : duration
+  });
+}
+
+function setResolution(resolution: ShotVideoResolution) {
+  if (!selectedRenderShot.value) return;
+  store.setVideoDraftOptions(selectedRenderShot.value.shotId, { resolution });
+}
+
+function setModelType(modelType: ShotVideoModelType) {
+  if (!selectedRenderShot.value) return;
+  store.setVideoDraftOptions(selectedRenderShot.value.shotId, { modelType });
+}
+
+async function handleSelectVersion(videoId: string) {
   if (!selectedRenderShot.value) return;
   try {
-    await store.selectRenderVersion(selectedRenderShot.value.shotId, renderId);
+    await store.selectVideoVersion(selectedRenderShot.value.shotId, videoId);
     historyOpen.value = false;
     toast.success("已切换当前版本");
   } catch (e) {
@@ -208,7 +289,7 @@ async function handleSelectVersion(renderId: string) {
 }
 
 async function handleLockShot() {
-  if (!selectedRenderShot.value || !flags.value.canLockShot) return;
+  if (!selectedRenderShot.value || !flags.value.canLockShot || !selectedRenderShot.value.currentVideoRenderId) return;
   try {
     await store.lockShot(selectedRenderShot.value.shotId);
     toast.success("镜头已锁定为最终版");
@@ -225,8 +306,8 @@ async function handleLockShot() {
       <button class="primary-btn" type="button" disabled>批量继续生成</button>
     </template>
 
-    <div v-if="!flags.canRender && !renderShots.length" class="empty-note">
-      资产锁定后可开始镜头渲染
+    <div v-if="!hasEnteredRenderPhase" class="empty-note">
+      {{ renderBlockedMessage }}
     </div>
     <div v-else-if="!renderShots.length" class="empty-note">
       尚未发现可渲染镜头
@@ -253,7 +334,7 @@ async function handleLockShot() {
                   item.status === "success"
                     ? "已完成"
                     : item.status === "processing"
-                      ? "生成中"
+                      ? "待处理"
                       : "待处理"
                 }}
               </span>
@@ -276,14 +357,15 @@ async function handleLockShot() {
                 class="ghost-btn"
                 type="button"
                 data-testid="generate-draft-btn"
-                :disabled="disableDraftActions || loadingDraft"
+                :disabled="generateDraftDisabled"
                 @click="generateDraft"
               >
-                {{ loadingDraft ? "草稿生成中..." : "生成草稿" }}
+                {{ generateDraftButtonText }}
               </button>
               <button
                 class="ghost-btn"
                 type="button"
+                data-testid="history-btn"
                 :disabled="!selectedRenderShot || renderHistoryLoadingShotId === selectedRenderShot.shotId"
                 @click="historyOpen = true"
               >
@@ -292,13 +374,39 @@ async function handleLockShot() {
               <button
                 class="primary-btn"
                 type="button"
-                data-testid="confirm-render-btn"
-                :disabled="confirmDisabled"
-                @click="confirmRender"
+                data-testid="generate-video-btn"
+                :disabled="generateVideoDisabled"
+                @click="generateVideo"
               >
-                {{ submitting ? "提交中..." : "确认生成" }}
+                {{ generateVideoButtonText }}
               </button>
             </div>
+          </div>
+
+          <div class="selectors">
+            <article>
+              <span>视频时长</span>
+              <div class="selector-row">
+                <button data-testid="duration-option" class="ghost-btn small" type="button" :class="{ active: selectedVideoOptions?.duration === 4 }" @click="setDuration(4)">4 秒</button>
+                <button data-testid="duration-option" class="ghost-btn small" type="button" :class="{ active: selectedVideoOptions?.duration === 5 }" @click="setDuration(5)">5 秒</button>
+                <button data-testid="duration-option" class="ghost-btn small" type="button" :class="{ active: selectedVideoOptions?.duration === 8 }" @click="setDuration(8)">8 秒</button>
+                <button data-testid="duration-option" class="ghost-btn small" type="button" :class="{ active: selectedVideoOptions?.duration === 10 }" @click="setDuration(10)">10 秒</button>
+              </div>
+            </article>
+            <article>
+              <span>分辨率</span>
+              <div class="selector-row">
+                <button data-testid="resolution-480p" class="ghost-btn small" type="button" :class="{ active: selectedVideoOptions?.resolution === '480p' }" @click="setResolution('480p')">480P</button>
+                <button class="ghost-btn small" type="button" :class="{ active: selectedVideoOptions?.resolution === '720p' }" @click="setResolution('720p')">720P</button>
+              </div>
+            </article>
+            <article>
+              <span>模型类型</span>
+              <div class="selector-row">
+                <button class="ghost-btn small" type="button" :class="{ active: selectedVideoOptions?.modelType === 'standard' }" @click="setModelType('standard')">标准</button>
+                <button class="ghost-btn small" type="button" :class="{ active: selectedVideoOptions?.modelType === 'fast' }" @click="setModelType('fast')">极速</button>
+              </div>
+            </article>
           </div>
 
           <div v-if="activeRenderJobId && activeRenderShotId === selectedRenderShot.shotId" class="render-progress">
@@ -309,20 +417,15 @@ async function handleLockShot() {
             <ProgressBar :value="renderProgress" />
           </div>
 
-          <RenderRetryBanner
-            :error-code="versionErrorCode"
-            :error-msg="versionErrorMsg"
-            :shot-status="selectedRenderShot.shotStatus"
-          />
-
           <label class="field-label" for="draft-prompt">镜头提示词</label>
           <textarea
             id="draft-prompt"
             data-testid="draft-prompt"
-            v-model="draftPrompt"
+            :value="draftPrompt"
             class="prompt-input"
             rows="8"
             placeholder="先生成草稿，再按需要调整镜头提示词"
+            @input="onPromptInput(($event.target as HTMLTextAreaElement).value)"
           />
 
           <div class="reference-head">
@@ -339,30 +442,51 @@ async function handleLockShot() {
               <button class="ghost-btn small" type="button" @click="removeReference(item.id)">删除</button>
             </article>
           </div>
-          <div v-else class="empty-inline">至少保留 1 张参考图后才能确认生成。</div>
+          <div v-else class="empty-inline">至少保留 1 张参考图后才能生成视频。</div>
         </div>
 
         <div class="preview-panel">
           <div class="preview-frame">
             <div class="frame-caption">
-              <span>Frame Preview</span>
+              <span>Video Preview</span>
               <strong>{{ selectedRenderShot.title }}</strong>
             </div>
-            <img v-if="previewImageUrl" class="preview-image" :src="previewImageUrl" :alt="selectedRenderShot.title" />
-            <div v-else class="preview-empty">当前还没有可预览的成功版本</div>
+            <video
+              v-if="previewVideoUrl"
+              class="preview-video"
+              :src="previewVideoUrl"
+              controls
+              playsinline
+              preload="metadata"
+            />
+            <div v-else-if="activeRenderJobId && activeRenderShotId === selectedRenderShot.shotId" class="preview-empty">
+              正在生成成品视频，请稍候
+            </div>
+            <div v-else class="preview-empty">
+              当前还没有可播放的成品视频
+            </div>
+          </div>
+
+          <div v-if="showVideoGeneratingBanner" class="info-banner">
+            <strong>新版本生成中</strong>
+            <p>继续展示当前成功版本，新的成品视频完成后会自动刷新。</p>
           </div>
 
           <div class="preview-notes">
-            <article>
-              <span>Prompt Snapshot</span>
-              <pre>{{ promptSnapshotText || "(暂无快照)" }}</pre>
+            <article v-if="currentParams">
+              <span>当前参数</span>
+              <dl class="param-summary">
+                <div><dt>时长</dt><dd>{{ currentParams.duration == null ? "未指定" : `${currentParams.duration} 秒` }}</dd></div>
+                <div><dt>分辨率</dt><dd>{{ currentParams.resolution }}</dd></div>
+                <div><dt>模型</dt><dd>{{ currentParams.modelType === "fast" ? "极速" : "标准" }}</dd></div>
+              </dl>
             </article>
             <article>
               <span>操作</span>
               <button
                 class="primary-btn"
                 type="button"
-                :disabled="!flags.canLockShot || !selectedRenderShot.currentRenderId"
+                :disabled="!flags.canLockShot || !selectedRenderShot.currentVideoRenderId"
                 @click="handleLockShot"
               >
                 锁定最终版
@@ -376,7 +500,7 @@ async function handleLockShot() {
     <RenderVersionHistory
       :open="historyOpen"
       :versions="selectedVersions"
-      :current-render-id="selectedRenderShot?.currentRenderId ?? null"
+      :current-render-id="selectedRenderShot?.currentVideoRenderId ?? null"
       :loading="renderHistoryLoadingShotId === selectedRenderShot?.shotId"
       @close="historyOpen = false"
       @select="handleSelectVersion"
@@ -470,6 +594,26 @@ async function handleLockShot() {
   gap: 10px;
   flex-wrap: wrap;
 }
+.selectors {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+.selectors article span {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--accent);
+}
+.selector-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.selector-row .ghost-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .field-label {
   display: block;
   margin: 18px 0 8px;
@@ -527,16 +671,15 @@ async function handleLockShot() {
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--panel-border);
 }
-.preview-image,
+.preview-video,
 .preview-empty {
   width: 100%;
   min-height: 320px;
   margin-top: 16px;
   border-radius: var(--radius-sm);
 }
-.preview-image {
+.preview-video {
   display: block;
-  object-fit: cover;
   background: #0b0d1a;
 }
 .preview-empty {
@@ -549,7 +692,8 @@ async function handleLockShot() {
   display: grid;
   gap: 14px;
 }
-.preview-notes article {
+.preview-notes article,
+.info-banner {
   padding: 16px;
   border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.02);
@@ -561,18 +705,26 @@ async function handleLockShot() {
   font-size: 12px;
   color: var(--text-faint);
 }
-.preview-notes pre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
-  color: var(--text-muted);
-}
 .render-progress {
   margin-top: 16px;
   padding: 12px;
   border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.02);
+}
+.param-summary {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.param-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.param-summary dt,
+.param-summary dd,
+.info-banner p {
+  margin: 0;
 }
 .empty-note,
 .empty-inline {

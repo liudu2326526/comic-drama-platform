@@ -23,9 +23,9 @@ STAGE_ORDER: list[ProjectStageRaw] = [
 
 STAGE_ZH: dict[ProjectStageRaw, str] = {
     ProjectStageRaw.DRAFT: "草稿中",
-    ProjectStageRaw.STORYBOARD_READY: "分镜已生成",
-    ProjectStageRaw.CHARACTERS_LOCKED: "角色已锁定",
-    ProjectStageRaw.SCENES_LOCKED: "场景已匹配",
+    ProjectStageRaw.STORYBOARD_READY: "角色设定中",
+    ProjectStageRaw.CHARACTERS_LOCKED: "场景设定中",
+    ProjectStageRaw.SCENES_LOCKED: "镜头待生成",
     ProjectStageRaw.RENDERING: "镜头生成中",
     ProjectStageRaw.READY_FOR_EXPORT: "待导出",
     ProjectStageRaw.EXPORTED: "已导出",

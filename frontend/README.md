@@ -90,7 +90,7 @@ M3a 在 M2 的分镜闭环之上,打通了"生成角色 → 锁定主角 → 生
 | 端点 | 组件 / Store |
 | --- | --- |
 | `GET /api/v1/projects/{id}/characters` | 调试/备用端点;页面读路径仍走聚合 `GET /projects/{id}` |
-| `POST /api/v1/projects/{id}/characters/generate` | `CharacterAssetsPanel`(空态大按钮)+ `store.generateCharacters` |
+| `POST /api/v1/projects/{id}/characters/generate` | `CharacterAssetsPanel`(空态大按钮)+ `store.generateCharacters`; 返回 `extract_characters` 主 job,前端在其成功后自动续接 `gen_character_asset` 主 job |
 | `PATCH /api/v1/projects/{id}/characters/{cid}` | `CharacterEditorModal` + `store.patchCharacter` |
 | `POST /api/v1/projects/{id}/characters/{cid}/regenerate` | `CharacterAssetsPanel` "重新生成参考图" |
 | `POST /api/v1/projects/{id}/characters/{cid}/lock` | `CharacterAssetsPanel` "设为主角 · 锁定" / "仅锁定" |

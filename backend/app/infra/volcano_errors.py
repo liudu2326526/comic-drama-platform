@@ -39,6 +39,28 @@ _CONTENT_FILTER_CODES = {
     "ContentFilter", "OutputImageSensitiveContentDetected",
     "OutputVideoSensitiveContentDetected", "content_filter",
 }
+_INPUT_IMAGE_FILTER_PREFIXES = (
+    "InputImageSensitiveContentDetected",
+    "InputSensitiveContentDetected",
+)
+
+
+def is_content_filter_code(code: str) -> bool:
+    return bool(
+        code
+        and (
+            code in _CONTENT_FILTER_CODES
+            or any(code.startswith(prefix) for prefix in _INPUT_IMAGE_FILTER_PREFIXES)
+        )
+    )
+
+
+def humanize_volcano_error_message(message: str) -> str:
+    if any(message.startswith(prefix) for prefix in _INPUT_IMAGE_FILTER_PREFIXES):
+        return "参考图被平台判定含隐私或敏感信息，请更换参考图后重试"
+    if is_content_filter_code(message):
+        return "输入内容触发平台安全策略，请调整文案或参考图后重试"
+    return message
 
 
 def classify_http(resp: httpx.Response) -> None:
@@ -52,8 +74,8 @@ def classify_http(resp: httpx.Response) -> None:
         ra = resp.headers.get("Retry-After")
         raise VolcanoRateLimitError("rate limited", int(ra) if ra and ra.isdigit() else None)
     if resp.status_code == 400:
-        if code_str in _CONTENT_FILTER_CODES:
-            raise VolcanoContentFilterError(code_str)
+        if is_content_filter_code(code_str):
+            raise VolcanoContentFilterError(humanize_volcano_error_message(code_str))
         raise VolcanoParamError(f"{code_str or resp.text[:200]}")
     if 500 <= resp.status_code < 600:
         raise VolcanoServerError(f"{resp.status_code}: {resp.text[:200]}")

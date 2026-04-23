@@ -44,18 +44,17 @@ describe("scenesApi request shape", () => {
     );
   });
 
-  it("lock(async) → 返回 ack=async + job_id", async () => {
+  it("confirmStage → POST /projects/:id/scenes/confirm", async () => {
     const spy = vi.spyOn(client, "post").mockResolvedValue({
-      data: { ack: "async", job_id: "SJ1", sub_job_ids: [] }
+      data: { stage: "scenes_locked", stage_raw: "scenes_locked" }
     } as never);
-    const r = await scenesApi.lock("pid", "s1");
+    const r = await scenesApi.confirmStage("pid");
     expect(spy).toHaveBeenCalledWith(
-      "/projects/pid/scenes/s1/lock",
+      "/projects/pid/scenes/confirm",
       {},
       { timeout: 30_000 }
     );
-    expect(r.ack).toBe("async");
-    expect(r.job_id).toBe("SJ1");
+    expect(r.stage_raw).toBe("scenes_locked");
   });
 });
 

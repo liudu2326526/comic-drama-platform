@@ -6,6 +6,7 @@ from .gen_scene_asset import gen_scene_asset
 from .register_character_asset import register_character_asset
 from .lock_scene_asset import lock_scene_asset
 from .extract_scenes import extract_scenes
+from .gen_shot_draft import gen_shot_draft
 from .render_shot import render_shot_task
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "register_character_asset",
     "lock_scene_asset",
     "extract_scenes",
+    "gen_shot_draft",
     "render_shot_task"
 ]

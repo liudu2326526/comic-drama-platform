@@ -2,7 +2,7 @@
 import asyncio
 from app.tasks.celery_app import celery_app
 from app.infra.db import get_session_factory
-from app.pipeline.transitions import update_job_progress, advance_to_characters_locked
+from app.pipeline.transitions import update_job_progress
 from app.domain.services.character_service import CharacterService
 from app.domain.models import Character, Project
 
@@ -41,13 +41,7 @@ async def _run(job_id: str, project_id: str, character_id: str) -> None:
             # 2. 执行注册步骤
             await CharacterService._register_asset_steps(session, character, on_step=_on_step)
             
-            # 3. 尝试推进阶段 (如果主角已锁定)
-            try:
-                await advance_to_characters_locked(session, project)
-            except Exception:
-                pass
-            
-            # 4. 标记成功
+            # 3. 标记成功
             await update_job_progress(session, job_id, status="succeeded", done=3, total=3)
             await session.commit()
             

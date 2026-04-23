@@ -34,9 +34,9 @@ const TEXT: Record<number, string> = {
   [ERROR_CODE.VALIDATION]: "参数不合法,请检查后重试",
   [ERROR_CODE.STAGE_FORBIDDEN]: "当前阶段不允许该操作",
   [ERROR_CODE.NOT_FOUND]: "资源不存在或已被删除",
-  [ERROR_CODE.CONFLICT]: "业务冲突,请刷新后重试",
+  [ERROR_CODE.CONFLICT]: "当前已有进行中的任务,请等待完成后再试",
   [ERROR_CODE.RATE_LIMIT]: "AI 限流,请稍后重试",
-  [ERROR_CODE.CONTENT_FILTER]: "AI 内容违规,请修改文案后重试", // ← 新增(M3a)
+  [ERROR_CODE.CONTENT_FILTER]: "AI 内容受限,请调整文案或参考图后重试",
   [ERROR_CODE.INTERNAL]: "服务异常,请稍后再试",
   [ERROR_CODE.UPSTREAM]: "上游服务异常,请稍后再试"
 };

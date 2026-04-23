@@ -12,6 +12,7 @@ from app.infra.volcano_errors import (
     VolcanoRateLimitError,
     VolcanoServerError,
     VolcanoTimeoutError,
+    humanize_volcano_error_message,
 )
 from app.pipeline.transitions import (
     mark_shot_render_failed,
@@ -126,8 +127,9 @@ async def _render_shot_task(shot_id: str, render_id: str, job_id: str) -> None:
             job.result = {"shot_id": shot.id, "render_id": render.id, "image_url": object_key}
             await session.commit()
         except VolcanoError as exc:
-            mark_shot_render_failed(shot, render, error_code=_volcano_error_code(exc), error_msg=str(exc))
-            await update_job_progress(session, job_id, status="failed", error_msg=str(exc))
+            msg = humanize_volcano_error_message(str(exc))
+            mark_shot_render_failed(shot, render, error_code=_volcano_error_code(exc), error_msg=msg)
+            await update_job_progress(session, job_id, status="failed", error_msg=msg)
             await session.commit()
         except Exception as exc:
             logger.exception("render_shot failed")

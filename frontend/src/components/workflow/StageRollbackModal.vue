@@ -11,9 +11,9 @@ import type { ProjectStageRaw } from "@/types/api";
 
 const STAGE_OPTIONS: { value: ProjectStageRaw; label: string }[] = [
   { value: "draft", label: "草稿中" },
-  { value: "storyboard_ready", label: "分镜已生成" },
-  { value: "characters_locked", label: "角色已锁定" },
-  { value: "scenes_locked", label: "场景已匹配" },
+  { value: "storyboard_ready", label: "角色设定中" },
+  { value: "characters_locked", label: "场景设定中" },
+  { value: "scenes_locked", label: "镜头待生成" },
   { value: "rendering", label: "镜头生成中" },
   { value: "ready_for_export", label: "待导出" },
   { value: "exported", label: "已导出" }

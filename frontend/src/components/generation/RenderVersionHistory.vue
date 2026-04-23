@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import Modal from "@/components/common/Modal.vue";
-import type { RenderVersionRead } from "@/types/api";
+import type { ShotVideoVersionRead } from "@/types/api";
 
 defineProps<{
   open: boolean;
-  versions: RenderVersionRead[];
+  versions: ShotVideoVersionRead[];
   currentRenderId: string | null;
   loading?: boolean;
 }>();
@@ -21,9 +21,17 @@ defineEmits<{
     <div v-else-if="!versions.length" class="modal-empty">当前镜头还没有历史版本。</div>
     <div v-else class="version-list">
       <article v-for="item in versions" :key="item.id" class="version-row">
-        <div>
-          <strong>v{{ item.version_no }}</strong>
-          <p>{{ item.status }}</p>
+        <div class="version-copy">
+          <strong>版本 v{{ item.version_no }}</strong>
+          <p>{{ item.status === "succeeded" ? "已完成" : item.status }}</p>
+          <small>{{ item.created_at }}</small>
+          <video
+            v-if="item.video_url"
+            class="history-video"
+            :src="item.video_url"
+            preload="none"
+            controls
+          />
         </div>
         <button
           class="ghost-btn small"
@@ -65,5 +73,17 @@ defineEmits<{
 .version-row p {
   margin: 4px 0 0;
   color: var(--text-muted);
+}
+.version-copy {
+  display: grid;
+  gap: 6px;
+}
+.version-copy small {
+  color: var(--text-faint);
+}
+.history-video {
+  width: 220px;
+  max-width: 100%;
+  border-radius: var(--radius-sm);
 }
 </style>

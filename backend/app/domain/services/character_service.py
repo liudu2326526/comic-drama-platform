@@ -6,14 +6,25 @@ import logging
 
 from app.domain.models import Character, Project
 from app.domain.schemas.character import CharacterUpdate
-from app.pipeline.transitions import assert_asset_editable, lock_protagonist, advance_to_characters_locked
+from app.pipeline.transitions import assert_asset_editable
 from app.infra import get_volcano_asset_client
 from app.infra.asset_store import build_asset_url
+from app.pipeline.states import ProjectStageRaw
+from app.pipeline.transitions import InvalidTransition
 
 logger = logging.getLogger(__name__)
 
 
 class CharacterService:
+    REGISTER_ASSET_ALLOWED_STAGES = {
+        ProjectStageRaw.STORYBOARD_READY.value,
+        ProjectStageRaw.CHARACTERS_LOCKED.value,
+        ProjectStageRaw.SCENES_LOCKED.value,
+        ProjectStageRaw.RENDERING.value,
+        ProjectStageRaw.READY_FOR_EXPORT.value,
+        ProjectStageRaw.EXPORTED.value,
+    }
+
     @staticmethod
     async def list_by_project(session: AsyncSession, project_id: str) -> Sequence[Character]:
         stmt = select(Character).where(Character.project_id == project_id).order_by(Character.created_at)
@@ -34,69 +45,52 @@ class CharacterService:
         assert_asset_editable(project, "character")
         
         data = update_data.model_dump(exclude_unset=True)
+        if "role_type" in data and data["role_type"] == "protagonist":
+            data["role_type"] = "supporting"
         for key, value in data.items():
             setattr(character, key, value)
+        character.is_protagonist = False
         
         return character
 
     @staticmethod
-    async def lock(
+    async def register_asset_async(
         session: AsyncSession, 
         project: Project, 
         character: Character
     ) -> dict:
-        """同步普通锁定(as_protagonist 始终为 False): 立即置锁 + 尝试推进 stage"""
-        assert_asset_editable(project, "character")
-        character.locked = True
-        
-        # 检查是否可以推进 stage
-        try:
-            await advance_to_characters_locked(session, project)
-        except Exception:
-            pass
-            
-        return {
-            "id": character.id, 
-            "locked": character.locked, 
-            "is_protagonist": character.is_protagonist
-        }
-
-    @staticmethod
-    async def lock_protagonist_async(
-        session: AsyncSession, 
-        project: Project, 
-        character: Character
-    ) -> str:
-        """异步分支:同步完成 lock_protagonist(标主角)+ 投递 register_character_asset task,返回 job_id"""
+        """异步触发角色入人像库,不修改阶段与锁定状态。"""
         from app.tasks.ai.register_character_asset import register_character_asset
         from app.domain.services.job_service import JobService
         from app.domain.models import Job
         from app.api.errors import ApiError
         from app.pipeline.transitions import update_job_progress
 
-        assert_asset_editable(project, "character")
+        if project.stage not in CharacterService.REGISTER_ASSET_ALLOWED_STAGES:
+            raise InvalidTransition(
+                project.stage,
+                "register_character_asset",
+                "当前阶段不允许执行入人像库",
+            )
 
-        # 0. I2: 查重 (后端兜底)
         stmt = select(Job).where(
             Job.project_id == project.id,
             Job.kind == "register_character_asset",
-            Job.status.in_(["queued", "running"])
+            Job.status.in_(["queued", "running"]),
         )
-        existing = (await session.execute(stmt)).scalars().first()
-        if existing:
-            raise ApiError(40901, "已有主角锁定任务进行中")
-        
-        # 1. 同步标为主角 + locked=True
-        await lock_protagonist(session, project, character)
-        
-        # 2. 创建 Job
+        existing_jobs = (await session.execute(stmt)).scalars().all()
+        for existing in existing_jobs:
+            if existing.payload and existing.payload.get("character_id") == character.id:
+                raise ApiError(40901, "该角色已有入人像库任务进行中")
+
         job = await JobService(session).create_job(
             project_id=project.id, 
             kind="register_character_asset",
-            payload={"character_id": character.id}
+            target_type="character",
+            target_id=character.id,
+            payload={"character_id": character.id},
         )
         
-        # 3. 投递任务
         await session.commit()
         from app.config import get_settings
         if get_settings().celery_task_always_eager:
@@ -114,7 +108,7 @@ class CharacterService:
                     await update_job_progress(session, job.id, status="failed", error_msg=f"任务分发失败: {str(e)}")
                 await session.commit()
         
-        return job.id
+        return {"job_id": job.id, "sub_job_ids": []}
 
     @staticmethod
     async def _register_asset_steps(
@@ -125,10 +119,11 @@ class CharacterService:
         """1) create_group(若无) 2) create_asset 3) wait_active。幂等。"""
         if not character.reference_image_url:
             return
-            
-        video_ref = (character.video_style_ref or {}).copy()
+
+        video_ref = dict(character.video_style_ref or {})
         if video_ref.get("asset_id") and video_ref.get("asset_status") == "Active":
-            if on_step: await on_step(3, "已入库,跳过")
+            if on_step:
+                await on_step(3, "已入库,跳过")
             return
 
         try:
@@ -140,7 +135,8 @@ class CharacterService:
         try:
             # Step 0: Group
             if not video_ref.get("asset_group_id"):
-                if on_step: await on_step(0, "创建 AssetGroup")
+                if on_step:
+                    await on_step(0, "创建 AssetGroup")
                 group = await asset_client.create_asset_group(
                     name=f"char_{character.id}",
                     description=f"Project {character.project_id} - {character.name}"
@@ -149,7 +145,8 @@ class CharacterService:
 
             # Step 1: Asset
             if not video_ref.get("asset_id"):
-                if on_step: await on_step(1, "创建 Asset")
+                if on_step:
+                    await on_step(1, "创建 Asset")
                 public_url = build_asset_url(character.reference_image_url)
                 if not public_url:
                     return
@@ -158,21 +155,29 @@ class CharacterService:
                     url=public_url,
                     name=character.name
                 )
-                video_ref["asset_id"] = asset["Id"]
-                video_ref["asset_status"] = "Pending"
-                character.video_style_ref = video_ref
+                video_ref = {
+                    **video_ref,
+                    "asset_id": asset["Id"],
+                    "asset_status": "Pending",
+                }
+                character.video_style_ref = dict(video_ref)
                 await session.flush()
 
             # Step 2: Wait
             if video_ref.get("asset_status") != "Active":
-                if on_step: await on_step(2, "等待 Active")
+                if on_step:
+                    await on_step(2, "等待 Active")
                 final = await asset_client.wait_asset_active(video_ref["asset_id"], timeout=180)
-                video_ref["asset_status"] = final["Status"]
-                video_ref["asset_updated_at"] = datetime.now(timezone.utc).isoformat()
-                character.video_style_ref = video_ref
+                video_ref = {
+                    **video_ref,
+                    "asset_status": final["Status"],
+                    "asset_updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                character.video_style_ref = dict(video_ref)
                 await session.flush()
 
-            if on_step: await on_step(3, "完成")
+            if on_step:
+                await on_step(3, "完成")
         finally:
             close = getattr(asset_client, "aclose", None)
             if close is not None:

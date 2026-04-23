@@ -385,18 +385,28 @@ const { job } = useJobPolling(jobIdRef, {
   - 其他阶段:所有写按钮灰化,悬浮提示"当前阶段已锁定,如需修改请 回退阶段"
   - 点"回退阶段"打开 `StageRollbackModal`(§7.3.7)
 - 详情区(右侧)展示 `detail` / `tags` / `duration`,同阶段锁定规则
+- 分镜文案编辑与后续 render-draft 建议 prompt 需共享同一套“项目级统一视觉设定”语义:
+  - 镜头文案应尽量显式写出角色名、场景名、关键道具
+  - 避免只写“一个男人 / 一个房间 / 某个地方”这类弱锚点描述
+  - 后续进入 `GenerationPanel` 时,render-draft 会在这些镜头信息基础上拼入角色/场景已确认的项目级视觉设定
 
 #### 7.3.3 `CharacterAssetsPanel`
 
 - 角色列表 + 详情(保留 demo)
 - 操作按钮:
   - `生成角色资产`(仅 `stage_raw === 'storyboard_ready'`,触发 `/characters/generate` 并轮询)
+  - 面板顶部新增“角色统一视觉设定”卡片,用于维护项目级角色 prompt profile 草稿/已应用版本
   - **不提供"手动新增角色"按钮**(MVP 范围外;后端无对应 POST 端点,若 AI 漏识别角色需回退重解析)
   - demo 里的 `新增角色资产` 按钮在 MVP 中隐藏,待后续里程碑补 API 后再开放
 - 详情页显示:
   - 参考图(`reference_image_url`);无图时维持 demo 的 `.silhouette` 占位
   - `description` / `meta`
   - 按钮:`编辑描述` / `重新生成参考图`(触发 `/regenerate` job)/ `设为主角 / 锁定`
+- 角色统一视觉设定卡片的产品目标不是“多写几句风格词”,而是维护角色参考图共享的项目级视觉圣经,至少覆盖:
+  - 世界/时代锚点
+  - 画风与材质倾向
+  - 角色共性约束(人种、年龄感、服装质感、不可漂移的面部/发型习惯)
+  - 跨角色负向约束(禁止风格漂移、禁止额外人物、禁止文字水印)
 - 主角锁定后:卡片加 "主角 · 已锁定"角标,所有 meta 编辑禁用(需回退)
 
 #### 7.3.4 `SceneAssetsPanel`
@@ -404,9 +414,15 @@ const { job } = useJobPolling(jobIdRef, {
 - 与 `CharacterAssetsPanel` 结构对称
 - 操作按钮:
   - `生成场景资产`(仅 `stage_raw === 'characters_locked'`,触发 `/scenes/generate` 并轮询)
+  - 面板顶部新增“场景统一视觉设定”卡片,用于维护项目级场景 prompt profile 草稿/已应用版本
   - 选中场景后显示:`重新生成参考图` / `锁定`
   - **不提供"手动新增场景"按钮**(理由同角色);demo 里的 `新增场景资产` 按钮在 MVP 中隐藏
 - 详情区展示 `theme` 对应的装饰层(demo 的 `theme-palace/academy/harbor`) + 真实参考图
+- 场景统一视觉设定卡片的产品目标是维护“场景母版图”的共享空间规则,至少覆盖:
+  - 场景的时代/地域/建筑语汇
+  - 色板与光影
+  - 空间层次与关键结构习惯
+  - 跨场景负向约束(禁止时代错置、禁止结构漂移、禁止文字水印)
 - 额外:每个场景卡片显示 `usage`(`场景被 X 次 draft/reference 采用`),用于帮助用户理解哪些场景经常被镜头生成引用;**不再提供镜头绑定入口**
 
 #### 7.3.5 `GenerationPanel`(镜头生成页)
@@ -424,6 +440,16 @@ demo 最薄弱的 panel,需大幅扩展:
   - 点击 `确认生成` 后,才把最终 `prompt + references` 提交给 `/shots/{shot_id}/render`
   - `image_url` 展示当前 render;生成中显示骨架屏 + 轮询 progress
   - `generationNotes` 仅展示当前版本的 prompt / suggestion 摘要,不再作为未提交 draft 的存储来源
+- `render-draft` 的建议 prompt 不应是单纯“镜头描述复述”,而应显式继承:
+  - 当前 shot 的标题/描述/detail/tags
+  - 已确认的角色统一视觉设定
+  - 已确认的场景统一视觉设定
+  - 被选中的角色/场景参考图
+- UI 上应让用户感知到这份建议 prompt 的组成逻辑:
+  - 项目视觉规则
+  - 镜头目标与站位
+  - 角色/场景 references
+  - 可手动微调的镜头语言
 - 弹出组件:
   - `RenderVersionHistory`:shot 所有 `shot_renders` 的时间轴,缩略图 + `prompt_snapshot` 摘要,点击"切为当前"→ `/renders/{renderId}/select`
   - `RenderRetryBanner`:若 shot `status=failed`,顶部出警示条,分类显示失败原因(对齐后端错误分类)

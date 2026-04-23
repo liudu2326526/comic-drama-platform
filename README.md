@@ -43,6 +43,26 @@ comic-drama-platform/
 
 ---
 
+## Prompt Skills 参考
+
+项目在“角色设定 / 场景设定 / 分镜工作台 prompt 优化”阶段，当前主要参考以下 3 个 skill：
+
+| Skill | 来源 | 用途 |
+|---|---|---|
+| `ai-drama-prompt-factory` | [ClawHub](https://clawhub.ai/zhgarylu/ai-drama-prompt-factory) | 作为项目级“短剧提示词工厂”方法论来源，重点参考其“策划 → 设计 → 剧本 → 诊断 → 组装”的分层思路，用于约束项目级统一视觉设定、角色/场景资产定义和提示词组装方式。 |
+| `seedance2.0-prompt-skill` | [GitHub](https://github.com/MapleShaw/seedance2.0-prompt-skill) | 作为 Seedance 2.0 的视频/图片提示词工程参考，重点参考其时间戳分镜、长视频分段、一致性控制、镜头语言和首帧/参考图优先的工作流。 |
+| `sd2-pe` | [docs/huoshan_api/SKILL.md](docs/huoshan_api/SKILL.md) | 项目内本地 skill，重点参考其“八大核心要素”“多模态素材映射”“拒绝静默修改”“单时间片只保留一种主运镜”等规则，用于提升分镜工作台 prompt 的可控性。 |
+
+当前推荐的使用方式：
+
+- 项目级统一视觉设定：优先参考 `ai-drama-prompt-factory`
+- 角色参考图 / 场景母版图：结合 `ai-drama-prompt-factory` 与 `seedance2.0-prompt-skill`
+- 分镜工作台 / render-draft：重点参考 `sd2-pe` 与 `seedance2.0-prompt-skill`
+
+这些 skill 不是运行时依赖，但它们是当前 prompt 结构设计和后续优化的重要方法论来源。
+
+---
+
 ## 里程碑
 
 | 里程碑 | 主题 | 范围 |

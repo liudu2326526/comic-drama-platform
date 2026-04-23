@@ -109,33 +109,3 @@ async def test_generate_characters_rejects_when_generation_job_already_running(
     assert resp.status_code == 409
     assert body["code"] == 40901
     assert "已有角色生成任务进行中" in body["message"]
-
-
-@pytest.mark.asyncio
-async def test_extract_characters_placeholder_does_not_leave_job_queued(
-    client,
-    db_session,
-    project_factory,
-):
-    project_id = await _create_storyboard_ready_project(project_factory)
-    job = Job(
-        project_id=project_id,
-        kind="extract_characters",
-        status="queued",
-        progress=0,
-        done=0,
-        total=None,
-    )
-    db_session.add(job)
-    await db_session.commit()
-    await db_session.refresh(job)
-
-    extract_characters.delay(project_id, job.id)
-
-    jobs = await _load_jobs(db_session, project_id)
-    assert len(jobs) == 1
-    refreshed = jobs[0]
-    assert refreshed.status == "failed"
-    assert refreshed.error_msg is not None
-    assert "placeholder" in refreshed.error_msg
-    assert "not implemented" in refreshed.error_msg

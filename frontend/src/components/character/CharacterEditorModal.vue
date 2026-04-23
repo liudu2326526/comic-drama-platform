@@ -16,7 +16,6 @@ const emit = defineEmits<{
 }>();
 
 const ROLE_OPTIONS: { value: CharacterRoleType; label: string }[] = [
-  { value: "protagonist", label: "主角" },
   { value: "supporting", label: "配角" },
   { value: "atmosphere", label: "氛围" }
 ];
@@ -32,7 +31,7 @@ watch(
   (open) => {
     if (open && props.character) {
       name.value = props.character.name;
-      roleType.value = (props.character.role_type ?? "supporting") as CharacterRoleType;
+      roleType.value = (props.character.role_type === "protagonist" ? "supporting" : (props.character.role_type ?? "supporting")) as CharacterRoleType;
       summary.value = props.character.summary ?? "";
       description.value = props.character.description ?? "";
       validationError.value = null;

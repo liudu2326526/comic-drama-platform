@@ -28,6 +28,8 @@ from .shot_render import (
     RenderSubmitRequest,
     RenderVersionRead,
 )
+from .shot_draft import ShotDraftRead
+from .shot_video import ShotVideoSubmitRequest, ShotVideoVersionRead
 
 __all__ = [
     "ProjectCreate",
@@ -54,4 +56,7 @@ __all__ = [
     "RenderDraftRead",
     "RenderSubmitRequest",
     "RenderVersionRead",
+    "ShotDraftRead",
+    "ShotVideoSubmitRequest",
+    "ShotVideoVersionRead",
 ]

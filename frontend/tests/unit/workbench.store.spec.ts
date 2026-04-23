@@ -59,6 +59,27 @@ beforeEach(() => {
 });
 
 describe("workbench store", () => {
+  it("reload 默认静默刷新, 请求进行中不切回 loading skeleton", async () => {
+    let resolveGet!: (value: typeof FAKE_PROJECT) => void;
+    (projectsApi.get as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<typeof FAKE_PROJECT>((resolve) => {
+          resolveGet = resolve;
+        })
+    );
+
+    const store = useWorkbenchStore();
+    store.current = FAKE_PROJECT as never;
+    store.loading = false;
+
+    const pending = store.reload();
+    expect(store.loading).toBe(false);
+
+    resolveGet(FAKE_PROJECT);
+    await pending;
+    expect(store.loading).toBe(false);
+  });
+
   it("startParse stores job_id in activeParseJobId", async () => {
     (projectsApi.parse as ReturnType<typeof vi.fn>).mockResolvedValue({ job_id: "J1" });
     const store = useWorkbenchStore();

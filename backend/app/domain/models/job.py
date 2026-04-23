@@ -16,7 +16,9 @@ JOB_KIND_VALUES = [
     "gen_scene_asset_single",
     "register_character_asset",
     "lock_scene_asset",
+    "gen_shot_draft",
     "render_shot",
+    "render_shot_video",
     "render_batch",
     "export_video",
 ]

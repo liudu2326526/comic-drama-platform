@@ -10,7 +10,7 @@ import { storyboardsApi } from "@/api/storyboards";
 const mkProject = (overrides: Partial<import("@/types").ProjectData> = {}) => ({
   id: "P1",
   name: "Demo",
-  stage: "分镜已生成" as const,
+  stage: "角色设定中" as const,
   stage_raw: "storyboard_ready" as const,
   genre: "古风权谋",
   ratio: "9:16",
@@ -64,47 +64,75 @@ describe("workbench M3a actions", () => {
     expect(store.activeGenerateCharactersJobId).toBe("J1");
   });
 
-  it("lockCharacter(as_protagonist=true): 异步, 写入 activeLockCharacterJobId 且不立即 reload", async () => {
+  it("registerCharacterAsset(): 异步, 写入 activeRegisterCharacterAssetJobId 且不立即 reload", async () => {
     vi.spyOn(projectsApi, "get").mockResolvedValue(mkProject({
       characters: [{
         id: "C1", name: "秦昭", role: "配角", is_protagonist: false,
         locked: false, summary: "", description: "", meta: [], reference_image_url: null
       }]
     }) as any);
-    const lockSpy = vi.spyOn(charactersApi, "lock").mockResolvedValue({
-      ack: "async",
+    const lockSpy = vi.spyOn(charactersApi, "registerAsset").mockResolvedValue({
       job_id: "LJ1",
       sub_job_ids: []
     } as any);
     const store = useWorkbenchStore();
     await store.load("P1");
-    await store.lockCharacter("C1", { as_protagonist: true });
-    expect(lockSpy).toHaveBeenCalledWith("P1", "C1", { as_protagonist: true });
-    expect(store.activeLockCharacterJobId).toBe("LJ1");
-    expect(store.activeLockCharacterId).toBe("C1");
+    await store.registerCharacterAsset("C1");
+    expect(lockSpy).toHaveBeenCalledWith("P1", "C1");
+    expect(store.activeRegisterCharacterAssetJobId).toBe("LJ1");
+    expect(store.activeRegisterCharacterAssetCharacterId).toBe("C1");
     // 只有初始 load, 没有 lock 后的 reload
     expect(projectsApi.get).toHaveBeenCalledTimes(1);
   });
 
-  it("lockCharacter(as_protagonist=false): 同步, 完成后 reload", async () => {
+  it("rendering 阶段刷新时也会找回入人像库任务", async () => {
+    vi.spyOn(projectsApi, "get").mockResolvedValue(mkProject({
+      stage: "镜头生成中",
+      stage_raw: "rendering",
+      characters: [{
+        id: "C1", name: "秦昭", role: "配角", is_protagonist: false,
+        locked: false, summary: "", description: "", meta: [], reference_image_url: null
+      }]
+    }) as any);
+    vi.spyOn(projectsApi, "getJobs").mockResolvedValue([
+      {
+        id: "LJ2",
+        kind: "register_character_asset",
+        status: "running",
+        progress: 0,
+        done: 2,
+        total: 3,
+        created_at: "2026-04-21T00:00:00Z",
+        finished_at: null,
+        payload: { character_id: "C1" },
+        result: null,
+        error_msg: null
+      }
+    ] as any);
+    const store = useWorkbenchStore();
+    await store.load("P1");
+    await store.findAndTrackActiveJobs();
+    expect(store.activeRegisterCharacterAssetJobId).toBe("LJ2");
+    expect(store.activeRegisterCharacterAssetCharacterId).toBe("C1");
+  });
+
+  it("confirmCharactersStage(): 完成后 reload", async () => {
     const getSpy = vi.spyOn(projectsApi, "get").mockResolvedValue(mkProject({
       characters: [{
         id: "C1", name: "秦昭", role: "配角", is_protagonist: false,
         locked: false, summary: "", description: "", meta: [], reference_image_url: null
       }]
     }) as any);
-    const lockSpy = vi.spyOn(charactersApi, "lock").mockResolvedValue({
-      ack: "sync",
-      id: "C1",
-      locked: true,
-      is_protagonist: false
+    const lockSpy = vi.spyOn(charactersApi, "confirmStage").mockResolvedValue({
+      stage: "characters_locked",
+      stage_raw: "characters_locked"
     } as any);
     const store = useWorkbenchStore();
     await store.load("P1");
-    await store.lockCharacter("C1", { as_protagonist: false });
-    expect(lockSpy).toHaveBeenCalledWith("P1", "C1", { as_protagonist: false });
+    await store.confirmCharactersStage();
+    expect(lockSpy).toHaveBeenCalledWith("P1");
     expect(getSpy).toHaveBeenCalledTimes(2); // load + reload
-    expect(store.activeLockCharacterJobId).toBeNull();
+    expect(store.activeRegisterCharacterAssetJobId).toBeNull();
   });
 
   it("regenerateCharacter: 单项 job 记在 regenJobs['character:<id>']", async () => {
@@ -145,7 +173,7 @@ describe("workbench M3a actions", () => {
 
   it("bindShotScene: POST + reload", async () => {
     vi.spyOn(projectsApi, "get").mockResolvedValue(mkProject({
-      stage: "角色已锁定",
+      stage: "场景设定中",
       stage_raw: "characters_locked"
     }) as any);
     const bindSpy = vi.spyOn(storyboardsApi, "bindScene").mockResolvedValue({
@@ -159,7 +187,7 @@ describe("workbench M3a actions", () => {
 
   it("generateScenes: 写入 activeGenerateScenesJobId", async () => {
     vi.spyOn(projectsApi, "get").mockResolvedValue(mkProject({
-      stage: "角色已锁定",
+      stage: "场景设定中",
       stage_raw: "characters_locked"
     }) as any);
     vi.spyOn(scenesApi, "generate").mockResolvedValue({
@@ -174,7 +202,7 @@ describe("workbench M3a actions", () => {
 
   it("regenerateScene: 同一项目已有场景重生成时拒绝并发", async () => {
     vi.spyOn(projectsApi, "get").mockResolvedValue(mkProject({
-      stage: "角色已锁定",
+      stage: "场景设定中",
       stage_raw: "characters_locked",
       scenes: [
         { id: "S1", name: "长安殿", theme: "palace", summary: "", usage: "", description: "", meta: [], locked: false, reference_image_url: null },
@@ -190,25 +218,22 @@ describe("workbench M3a actions", () => {
     await expect(store.regenerateScene("S2")).rejects.toThrow("已有场景重生成任务进行中");
   });
 
-  it("lockScene(): 写 activeLockSceneJobId,不立即 reload", async () => {
+  it("confirmScenesStage(): 完成后 reload", async () => {
     vi.spyOn(projectsApi, "get").mockResolvedValue(mkProject({
-      stage: "角色已锁定",
+      stage: "场景设定中",
       stage_raw: "characters_locked",
       scenes: [{
         id: "S1", name: "长安殿", theme: "palace", summary: "", usage: "",
         description: "", meta: [], locked: false, reference_image_url: null
       }]
     }) as any);
-    const lockSpy = vi.spyOn(scenesApi, "lock").mockResolvedValue({
-      ack: "async", job_id: "SJ1", sub_job_ids: []
+    const lockSpy = vi.spyOn(scenesApi, "confirmStage").mockResolvedValue({
+      stage: "scenes_locked", stage_raw: "scenes_locked"
     } as any);
     const store = useWorkbenchStore();
     await store.load("P1");
-    await store.lockScene("S1");
-    expect(lockSpy).toHaveBeenCalledWith("P1", "S1", {});
-    expect(store.activeLockSceneJobId).toBe("SJ1");
-    expect(store.activeLockSceneId).toBe("S1");
-    // 只有初始 load, 没有 lock 后的 reload
-    expect(projectsApi.get).toHaveBeenCalledTimes(1);
+    await store.confirmScenesStage();
+    expect(lockSpy).toHaveBeenCalledWith("P1");
+    expect(projectsApi.get).toHaveBeenCalledTimes(2);
   });
 });

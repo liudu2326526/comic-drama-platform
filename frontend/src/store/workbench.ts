@@ -6,27 +6,33 @@ import { storyboardsApi } from "@/api/storyboards";
 import { charactersApi } from "@/api/characters";
 import { scenesApi } from "@/api/scenes";
 import { shotsApi } from "@/api/shots";
-import { ApiError } from "@/utils/error";
 import type { ProjectData, RenderShotItem, RenderStatus } from "@/types";
 import type {
   ProjectRollbackRequest,
   ProjectRollbackResponse,
   StoryboardConfirmResponse,
+  WorkflowStageConfirmResponse,
   StoryboardCreateRequest,
   StoryboardUpdateRequest,
   CharacterGenerateRequest,
-  CharacterLockRequest,
   CharacterUpdate,
   SceneGenerateRequest,
   SceneUpdate,
   JobState,
   RenderDraftRead,
   RenderSubmitRequest,
-  RenderVersionRead
+  RenderVersionRead,
+  ShotVideoDurationPreset,
+  ShotVideoModelType,
+  ShotVideoResolution,
+  ShotVideoVersionRead
 } from "@/types/api";
 
 export type WorkflowStep = "setup" | "storyboard" | "character" | "scene" | "render" | "export";
 export type RegenKind = "character" | "scene";
+type LoadOptions = {
+  silent?: boolean;
+};
 
 export const useWorkbenchStore = defineStore("workbench", () => {
   const current = ref<ProjectData | null>(null);
@@ -49,15 +55,20 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   const generateScenesJob = ref<{ projectId: string; jobId: string } | null>(null);
   const generateScenesError = ref<string | null>(null);
 
-  const lockCharacterJob = ref<{ projectId: string; jobId: string; characterId: string } | null>(null);
-  const lockCharacterError = ref<string | null>(null);
-
-  const lockSceneJob = ref<{ projectId: string; jobId: string; sceneId: string } | null>(null);
-  const lockSceneError = ref<string | null>(null);
+  const registerCharacterAssetJob = ref<{ projectId: string; jobId: string; characterId: string } | null>(null);
+  const registerCharacterAssetError = ref<string | null>(null);
+  const draftJobs = ref<Record<string, { projectId: string; jobId: string }>>({});
+  const draftErrors = ref<Record<string, string | null>>({});
   const renderJob = ref<{ projectId: string; jobId: string; shotId: string } | null>(null);
   const renderError = ref<string | null>(null);
   const renderDrafts = ref<Record<string, RenderDraftRead>>({});
   const renderVersions = ref<Record<string, RenderVersionRead[]>>({});
+  const videoDraftOptions = ref<Record<string, {
+    duration: ShotVideoDurationPreset | null;
+    resolution: ShotVideoResolution;
+    modelType: ShotVideoModelType;
+  }>>({});
+  const videoVersions = ref<Record<string, ShotVideoVersionRead[]>>({});
   const renderHistoryLoadingShotId = ref<string | null>(null);
 
   // 单项 regen: key = "<kind>:<id>"; value = jobId
@@ -78,24 +89,30 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   const activeGenerateScenesJobId = computed<string | null>(() =>
     scopedJobId(generateScenesJob.value)
   );
-  const activeLockCharacterJobId = computed<string | null>(() =>
-    current.value && lockCharacterJob.value && lockCharacterJob.value.projectId === current.value.id
-      ? lockCharacterJob.value.jobId
+  const activeRegisterCharacterAssetJobId = computed<string | null>(() =>
+    current.value && registerCharacterAssetJob.value && registerCharacterAssetJob.value.projectId === current.value.id
+      ? registerCharacterAssetJob.value.jobId
       : null
   );
-  const activeLockCharacterId = computed<string | null>(() =>
-    lockCharacterJob.value && current.value && lockCharacterJob.value.projectId === current.value.id
-      ? lockCharacterJob.value.characterId : null
+  const activeRegisterCharacterAssetCharacterId = computed<string | null>(() =>
+    registerCharacterAssetJob.value && current.value && registerCharacterAssetJob.value.projectId === current.value.id
+      ? registerCharacterAssetJob.value.characterId : null
   );
+  function draftJobIdFor(shotId: string): string | null {
+    const rec = draftJobs.value[shotId];
+    if (!rec || !current.value || rec.projectId !== current.value.id) return null;
+    return rec.jobId;
+  }
 
-  const activeLockSceneJobId = computed<string | null>(() =>
-    current.value && lockSceneJob.value && lockSceneJob.value.projectId === current.value.id
-      ? lockSceneJob.value.jobId
-      : null
+  function draftErrorFor(shotId: string): string | null {
+    return draftErrors.value[shotId] ?? null;
+  }
+
+  const activeDraftJobId = computed<string | null>(() =>
+    selectedShotId.value ? draftJobIdFor(selectedShotId.value) : null
   );
-  const activeLockSceneId = computed<string | null>(() =>
-    lockSceneJob.value && current.value && lockSceneJob.value.projectId === current.value.id
-      ? lockSceneJob.value.sceneId : null
+  const activeDraftShotId = computed<string | null>(() =>
+    selectedShotId.value && draftJobIdFor(selectedShotId.value) ? selectedShotId.value : null
   );
   const activeRenderJobId = computed<string | null>(() =>
     current.value && renderJob.value && renderJob.value.projectId === current.value.id
@@ -159,11 +176,12 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     (current.value?.storyboards ?? []).map((shot) => {
       const queue = (current.value?.generationQueue ?? []).find(
         (item) =>
-          item.kind === "render_shot" &&
+          (item.kind === "render_shot_video" || item.kind === "render_shot") &&
           (
             item.target_id === shot.id ||
             item.shot_id === shot.id ||
-            item.render_id === shot.current_render_id
+            item.render_id === shot.current_render_id ||
+            item.video_render_id === shot.current_video_render_id
           )
       );
       const isActive = activeRenderShotId.value === shot.id;
@@ -177,9 +195,13 @@ export const useWorkbenchStore = defineStore("workbench", () => {
           queue?.progress ??
           (shot.status === "failed" ? 0 : shot.status === "generating" ? 1 : 100),
         currentRenderId: shot.current_render_id,
+        currentVideoRenderId: shot.current_video_render_id ?? null,
         imageUrl: queue?.image_url ?? null,
-        versionNo: queue?.version_no ?? null,
+        videoUrl: shot.current_video_url ?? queue?.video_url ?? null,
+        lastFrameUrl: shot.current_last_frame_url ?? queue?.last_frame_url ?? null,
+        versionNo: shot.current_video_version_no ?? queue?.version_no ?? null,
         activeJobId: isActive ? activeRenderJobId.value : null,
+        paramsSnapshot: shot.current_video_params_snapshot ?? queue?.params_snapshot ?? null,
         errorCode: queue?.error_code ?? null,
         errorMsg: queue?.error_msg ?? (shot.status === "failed" ? renderError.value : null)
       };
@@ -187,8 +209,11 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   );
 
   // ---- 核心 load/reload/rollback ----
-  async function load(id: string) {
-    loading.value = true;
+  async function load(id: string, options: LoadOptions = {}) {
+    const silent = options.silent ?? false;
+    if (!silent) {
+      loading.value = true;
+    }
     error.value = null;
     try {
       const shouldResetRenderState = current.value?.id !== id;
@@ -196,6 +221,10 @@ export const useWorkbenchStore = defineStore("workbench", () => {
       if (shouldResetRenderState) {
         renderDrafts.value = {};
         renderVersions.value = {};
+        videoDraftOptions.value = {};
+        videoVersions.value = {};
+        draftJobs.value = {};
+        draftErrors.value = {};
         renderJob.value = null;
         renderError.value = null;
       }
@@ -212,12 +241,14 @@ export const useWorkbenchStore = defineStore("workbench", () => {
       error.value = (e as Error).message;
       throw e;
     } finally {
-      loading.value = false;
+      if (!silent) {
+        loading.value = false;
+      }
     }
   }
 
-  async function reload() {
-    if (current.value) await load(current.value.id);
+  async function reload(options: LoadOptions = { silent: true }) {
+    if (current.value) await load(current.value.id, options);
   }
 
   async function rollback(payload: ProjectRollbackRequest): Promise<ProjectRollbackResponse> {
@@ -278,27 +309,38 @@ export const useWorkbenchStore = defineStore("workbench", () => {
               new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
           )[0];
 
+      const lcaJob = running("register_character_asset");
+      if (lcaJob) {
+        const cid = (lcaJob.payload as { character_id?: string } | null)?.character_id ?? "";
+        registerCharacterAssetJob.value = {
+          projectId: current.value.id,
+          jobId: lcaJob.id,
+          characterId: cid
+        };
+        registerCharacterAssetError.value = null;
+      } else {
+        registerCharacterAssetJob.value = null;
+        const failed = lastFailed("register_character_asset");
+        registerCharacterAssetError.value = failed?.error_msg ?? null;
+      }
+
       if (stage === "storyboard_ready") {
+        const extractJob = running("extract_characters");
         const gcJob = running("gen_character_asset");
-        if (gcJob) {
+        if (extractJob) {
+          generateCharactersJob.value = { projectId: current.value.id, jobId: extractJob.id };
+          generateCharactersError.value = null;
+        } else if (gcJob) {
           generateCharactersJob.value = { projectId: current.value.id, jobId: gcJob.id };
+          generateCharactersError.value = null;
         } else {
-          const failed = lastFailed("gen_character_asset");
-          if (failed) generateCharactersError.value = failed.error_msg;
+          generateCharactersJob.value = null;
+          const failed =
+            lastFailed("extract_characters") ?? lastFailed("gen_character_asset");
+          generateCharactersError.value =
+            current.value.characters.length > 0 ? null : (failed?.error_msg ?? null);
         }
 
-        const lcaJob = running("register_character_asset");
-        if (lcaJob) {
-          const cid = (lcaJob.payload as { character_id?: string } | null)?.character_id ?? "";
-          lockCharacterJob.value = {
-            projectId: current.value.id,
-            jobId: lcaJob.id,
-            characterId: cid
-          };
-        } else {
-          const failed = lastFailed("register_character_asset");
-          if (failed) lockCharacterError.value = failed.error_msg;
-        }
       } else if (stage === "characters_locked") {
         const gsJob = running("gen_scene_asset");
         if (gsJob) {
@@ -307,23 +349,10 @@ export const useWorkbenchStore = defineStore("workbench", () => {
           const failed = lastFailed("gen_scene_asset");
           if (failed) generateScenesError.value = failed.error_msg;
         }
-
-        const lsaJob = running("lock_scene_asset");
-        if (lsaJob) {
-          const sid = (lsaJob.payload as { scene_id?: string } | null)?.scene_id ?? "";
-          lockSceneJob.value = {
-            projectId: current.value.id,
-            jobId: lsaJob.id,
-            sceneId: sid
-          };
-        } else {
-          const failed = lastFailed("lock_scene_asset");
-          if (failed) lockSceneError.value = failed.error_msg;
-        }
       }
 
       if (stage === "scenes_locked" || stage === "rendering" || stage === "ready_for_export") {
-        const rJob = running("render_shot");
+        const rJob = running("render_shot_video") ?? running("render_shot");
         if (rJob) {
           const shotId =
             rJob.target_id ??
@@ -335,6 +364,33 @@ export const useWorkbenchStore = defineStore("workbench", () => {
           const failed = lastFailed("render_shot");
           if (failed) renderError.value = failed.error_msg;
         }
+      }
+
+      if (stage === "scenes_locked" || stage === "rendering" || stage === "ready_for_export") {
+        const nextDraftJobs: Record<string, { projectId: string; jobId: string }> = {};
+        const nextDraftErrors: Record<string, string | null> = {};
+        jobs
+          .filter((j: JobState) => j.kind === "gen_shot_draft" && (j.status === "queued" || j.status === "running"))
+          .forEach((job) => {
+            const shotId =
+              job.target_id ??
+              ((job.payload as { shot_id?: string } | null)?.shot_id ?? "");
+            if (!shotId) return;
+            nextDraftJobs[shotId] = { projectId: current.value!.id, jobId: job.id };
+            nextDraftErrors[shotId] = null;
+          });
+        jobs
+          .filter((j: JobState) => j.kind === "gen_shot_draft" && j.status === "failed")
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          .forEach((job) => {
+            const shotId =
+              job.target_id ??
+              ((job.payload as { shot_id?: string } | null)?.shot_id ?? "");
+            if (!shotId || shotId in nextDraftErrors) return;
+            nextDraftErrors[shotId] = job.error_msg ?? null;
+          });
+        draftJobs.value = nextDraftJobs;
+        draftErrors.value = nextDraftErrors;
       }
     }
   }
@@ -402,6 +458,11 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     generateCharactersJob.value = null;
     generateCharactersError.value = msg;
   }
+  function attachGenerateCharactersJob(jobId: string) {
+    if (!current.value) return;
+    generateCharactersJob.value = { projectId: current.value.id, jobId };
+    generateCharactersError.value = null;
+  }
 
   async function patchCharacter(characterId: string, payload: CharacterUpdate) {
     if (!current.value) throw new Error("patchCharacter: no current project");
@@ -422,18 +483,21 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     return ack.job_id;
   }
 
-  async function lockCharacter(characterId: string, payload: CharacterLockRequest) {
-    if (!current.value) throw new Error("lockCharacter: no current project");
-    lockCharacterError.value = null;
-    const resp = await charactersApi.lock(current.value.id, characterId, payload);
-    if (resp.ack === "async") {
-      lockCharacterJob.value = { projectId: current.value.id, jobId: resp.job_id, characterId };
-      return;
-    }
-    await reload();
+  async function registerCharacterAsset(characterId: string): Promise<string> {
+    if (!current.value) throw new Error("registerCharacterAsset: no current project");
+    registerCharacterAssetError.value = null;
+    const ack = await charactersApi.registerAsset(current.value.id, characterId);
+    registerCharacterAssetJob.value = { projectId: current.value.id, jobId: ack.job_id, characterId };
+    return ack.job_id;
   }
-  function markLockCharacterSucceeded() { lockCharacterJob.value = null; lockCharacterError.value = null; }
-  function markLockCharacterFailed(msg: string) { lockCharacterJob.value = null; lockCharacterError.value = msg; }
+  function markRegisterCharacterAssetSucceeded() {
+    registerCharacterAssetJob.value = null;
+    registerCharacterAssetError.value = null;
+  }
+  function markRegisterCharacterAssetFailed(msg: string) {
+    registerCharacterAssetJob.value = null;
+    registerCharacterAssetError.value = msg;
+  }
 
   async function generateScenes(payload: SceneGenerateRequest = {}): Promise<string> {
     if (!current.value) throw new Error("generateScenes: no current project");
@@ -470,14 +534,19 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     return ack.job_id;
   }
 
-  async function lockScene(sceneId: string) {
-    if (!current.value) throw new Error("lockScene: no current project");
-    lockSceneError.value = null;
-    const resp = await scenesApi.lock(current.value.id, sceneId, {});
-    lockSceneJob.value = { projectId: current.value.id, jobId: resp.job_id, sceneId };
+  async function confirmCharactersStage(): Promise<WorkflowStageConfirmResponse> {
+    if (!current.value) throw new Error("confirmCharactersStage: no current project");
+    const resp = await charactersApi.confirmStage(current.value.id);
+    await reload();
+    return resp;
   }
-  function markLockSceneSucceeded() { lockSceneJob.value = null; lockSceneError.value = null; }
-  function markLockSceneFailed(msg: string) { lockSceneJob.value = null; lockSceneError.value = msg; }
+
+  async function confirmScenesStage(): Promise<WorkflowStageConfirmResponse> {
+    if (!current.value) throw new Error("confirmScenesStage: no current project");
+    const resp = await scenesApi.confirmStage(current.value.id);
+    await reload();
+    return resp;
+  }
 
   async function bindShotScene(shotId: string, sceneId: string) {
     if (!current.value) throw new Error("bindShotScene: no current project");
@@ -485,9 +554,19 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     await reload();
   }
 
+  async function generateRenderDraft(shotId: string): Promise<string> {
+    if (!current.value) throw new Error("generateRenderDraft: no current project");
+    if (draftJobIdFor(shotId)) throw new Error("该镜头已有草稿生成任务进行中");
+    draftErrors.value[shotId] = null;
+    const ack = await shotsApi.generateRenderDraft(current.value.id, shotId);
+    draftJobs.value[shotId] = { projectId: current.value.id, jobId: ack.job_id };
+    return ack.job_id;
+  }
+
   async function fetchRenderDraft(shotId: string): Promise<RenderDraftRead> {
     if (!current.value) throw new Error("fetchRenderDraft: no current project");
-    const draft = await shotsApi.renderDraft(current.value.id, shotId);
+    const draft = await shotsApi.getRenderDraft(current.value.id, shotId);
+    if (!draft) throw new Error("当前镜头还没有已保存草稿");
     renderDrafts.value[shotId] = draft;
     return draft;
   }
@@ -497,9 +576,34 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   }
 
   function updateRenderDraft(shotId: string, patch: Partial<RenderDraftRead>) {
-    const currentDraft = renderDrafts.value[shotId];
-    if (!currentDraft) return;
+    const currentDraft = renderDrafts.value[shotId] ?? {
+      shot_id: shotId,
+      prompt: "",
+      references: [],
+    };
     renderDrafts.value[shotId] = { ...currentDraft, ...patch };
+  }
+
+  function ensureVideoDraftOptions(shotId: string) {
+    if (!videoDraftOptions.value[shotId]) {
+      videoDraftOptions.value[shotId] = {
+        duration: null,
+        resolution: "480p",
+        modelType: "fast",
+      };
+    }
+    return videoDraftOptions.value[shotId];
+  }
+
+  function videoDraftOptionsFor(shotId: string) {
+    return ensureVideoDraftOptions(shotId);
+  }
+
+  function setVideoDraftOptions(
+    shotId: string,
+    patch: Partial<{ duration: ShotVideoDurationPreset | null; resolution: ShotVideoResolution; modelType: ShotVideoModelType; }>
+  ) {
+    videoDraftOptions.value[shotId] = { ...ensureVideoDraftOptions(shotId), ...patch };
   }
 
   async function confirmRenderShot(shotId: string, payload: RenderSubmitRequest): Promise<string> {
@@ -507,6 +611,27 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     if (activeRenderJobId.value) throw new Error("已有镜头渲染任务进行中");
     renderError.value = null;
     const ack = await shotsApi.render(current.value.id, shotId, payload);
+    renderJob.value = { projectId: current.value.id, jobId: ack.job_id, shotId };
+    return ack.job_id;
+  }
+
+  async function generateVideoFromDraft(shotId: string): Promise<string> {
+    if (!current.value) throw new Error("generateVideoFromDraft: no current project");
+    if (activeRenderJobId.value) throw new Error("已有镜头视频任务进行中");
+    const draft = renderDrafts.value[shotId];
+    if (!draft?.prompt?.trim()) throw new Error("请先生成或填写镜头提示词");
+    if (!draft.references.length) throw new Error("至少保留 1 张参考图后才能生成视频");
+
+    const options = ensureVideoDraftOptions(shotId);
+    renderError.value = null;
+    const payload = {
+      prompt: draft.prompt,
+      references: draft.references.map(({ id, kind, source_id, name, image_url }) => ({ id, kind, source_id, name, image_url })),
+      resolution: options.resolution,
+      model_type: options.modelType,
+      ...(options.duration !== null ? { duration: options.duration } : {}),
+    };
+    const ack = await shotsApi.generateVideo(current.value.id, shotId, payload);
     renderJob.value = { projectId: current.value.id, jobId: ack.job_id, shotId };
     return ack.job_id;
   }
@@ -527,11 +652,34 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     return renderVersions.value[shotId] ?? [];
   }
 
+  async function fetchVideoVersions(shotId: string): Promise<ShotVideoVersionRead[]> {
+    if (!current.value) throw new Error("fetchVideoVersions: no current project");
+    renderHistoryLoadingShotId.value = shotId;
+    try {
+      const rows = await shotsApi.listVideos(current.value.id, shotId);
+      videoVersions.value[shotId] = rows;
+      return rows;
+    } finally {
+      renderHistoryLoadingShotId.value = null;
+    }
+  }
+
+  function videoVersionsFor(shotId: string): ShotVideoVersionRead[] {
+    return videoVersions.value[shotId] ?? [];
+  }
+
   async function selectRenderVersion(shotId: string, renderId: string) {
     if (!current.value) throw new Error("selectRenderVersion: no current project");
     await shotsApi.selectRender(current.value.id, shotId, renderId);
     await reload();
     await fetchRenderVersions(shotId);
+  }
+
+  async function selectVideoVersion(shotId: string, videoId: string) {
+    if (!current.value) throw new Error("selectVideoVersion: no current project");
+    await shotsApi.selectVideo(current.value.id, shotId, videoId);
+    await reload();
+    await fetchVideoVersions(shotId);
   }
 
   async function lockShot(shotId: string) {
@@ -543,6 +691,16 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   function markRenderSucceeded() {
     renderJob.value = null;
     renderError.value = null;
+  }
+
+  function markDraftSucceeded(shotId: string) {
+    delete draftJobs.value[shotId];
+    draftErrors.value[shotId] = null;
+  }
+
+  function markDraftFailed(shotId: string, msg: string) {
+    delete draftJobs.value[shotId];
+    draftErrors.value[shotId] = msg;
   }
 
   function markRenderFailed(msg: string) {
@@ -577,16 +735,19 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     markGenStoryboardSucceeded, markGenStoryboardFailed,
     createShot, updateShot, deleteShot, reorderShots, moveShotUp, moveShotDown, confirmStoryboards,
     generateCharacters, markGenerateCharactersSucceeded, markGenerateCharactersFailed,
-    patchCharacter, regenerateCharacter, lockCharacter,
+    attachGenerateCharactersJob,
+    patchCharacter, regenerateCharacter, registerCharacterAsset,
     generateScenes, markGenerateScenesSucceeded, markGenerateScenesFailed,
-    patchScene, regenerateScene, lockScene, bindShotScene,
-    activeLockCharacterJobId, activeLockCharacterId, lockCharacterError,
-    markLockCharacterSucceeded, markLockCharacterFailed,
-    activeLockSceneJobId, activeLockSceneId, lockSceneError,
-    markLockSceneSucceeded, markLockSceneFailed,
-    fetchRenderDraft, renderDraftFor, updateRenderDraft,
+    patchScene, regenerateScene, confirmCharactersStage, confirmScenesStage, bindShotScene,
+    activeRegisterCharacterAssetJobId, activeRegisterCharacterAssetCharacterId, registerCharacterAssetError,
+    markRegisterCharacterAssetSucceeded, markRegisterCharacterAssetFailed,
+    activeDraftJobId, activeDraftShotId, draftJobIdFor, draftErrorFor,
+    generateRenderDraft, fetchRenderDraft, renderDraftFor, updateRenderDraft,
+    videoDraftOptionsFor, setVideoDraftOptions,
     confirmRenderShot, fetchRenderVersions, renderVersionsFor,
-    selectRenderVersion, lockShot, markRenderSucceeded, markRenderFailed,
+    generateVideoFromDraft, fetchVideoVersions, videoVersionsFor,
+    selectRenderVersion, selectVideoVersion, lockShot,
+    markDraftSucceeded, markDraftFailed, markRenderSucceeded, markRenderFailed,
     renderShots, activeRenderJobId, activeRenderShotId,
     renderHistoryLoadingShotId, renderError,
     markRegenByKeySucceeded, markRegenByKeyFailed,

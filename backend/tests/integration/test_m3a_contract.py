@@ -1,10 +1,6 @@
 
 import pytest
-import sqlalchemy as sa
 from httpx import AsyncClient
-from app.pipeline.states import ProjectStageRaw
-from app.infra.db import get_engine
-from app.domain.models import Character, Project
 
 @pytest.mark.asyncio
 async def test_m3a_contract_aggregate_includes_new_fields(client: AsyncClient):
@@ -72,99 +68,72 @@ async def test_characters_role_cn_mapping(client: AsyncClient):
     assert "data" in resp.json()
 
 @pytest.mark.asyncio
-async def test_lock_non_protagonist_stays_sync(client: AsyncClient, db_session):
+async def test_register_character_asset_returns_job_ack(client: AsyncClient, db_session):
     from tests.helpers import force_stage
-    # 1. 创建项目
     resp = await client.post("/api/v1/projects", json={
-        "name": "Lock Sync Test",
+        "name": "Register Asset Test",
         "story": "Story content",
     })
     pid = resp.json()["data"]["id"]
-    
-    # 2. 准备数据
-    from sqlalchemy import insert
-    from app.domain.models import Character
-    await db_session.execute(insert(Character).values(
-        id="C_SYNC", project_id=pid, name="SyncChar", role_type="supporting"
-    ))
-    await force_stage(db_session, pid, "storyboard_ready")
-    
-    resp = await client.post(f"/api/v1/projects/{pid}/characters/C_SYNC/lock", json={"as_protagonist": False})
-    assert resp.status_code == 200
-    body = resp.json()["data"]
-    assert body["ack"] == "sync"
-    assert body["locked"] is True
 
-@pytest.mark.asyncio
-async def test_lock_protagonist_returns_job_ack(client: AsyncClient, db_session):
-    from tests.helpers import force_stage
-    # 1. 创建项目
-    resp = await client.post("/api/v1/projects", json={
-        "name": "Lock Async Test",
-        "story": "Story content",
-    })
-    pid = resp.json()["data"]["id"]
-    
-    # 2. 准备数据
     from sqlalchemy import insert
     from app.domain.models import Character
     await db_session.execute(insert(Character).values(
         id="C_ASYNC", project_id=pid, name="AsyncChar", role_type="supporting"
     ))
     await force_stage(db_session, pid, "storyboard_ready")
-    
-    resp = await client.post(f"/api/v1/projects/{pid}/characters/C_ASYNC/lock", json={"as_protagonist": True})
+
+    resp = await client.post(f"/api/v1/projects/{pid}/characters/C_ASYNC/register_asset")
     assert resp.status_code == 200
     body = resp.json()["data"]
-    assert body["ack"] == "async"
     assert "job_id" in body
-    
-    # 校验 job 存在
+
     jid = body["job_id"]
     resp_job = await client.get(f"/api/v1/jobs/{jid}")
     assert resp_job.status_code == 200
     assert resp_job.json()["data"]["kind"] == "register_character_asset"
 
 @pytest.mark.asyncio
-async def test_lock_scene_returns_job_ack(client: AsyncClient, db_session):
+async def test_confirm_characters_stage_advances_with_existing_characters(client: AsyncClient, db_session):
     from tests.helpers import force_stage
-    # 1. 准备项目、场景和分镜 (满足推进 scenes_locked 的条件)
-    resp = await client.post("/api/v1/projects", json={"name": "SceneLockAsync", "story": "..."})
+
+    resp = await client.post("/api/v1/projects", json={"name": "Confirm Characters", "story": "..."})
     pid = resp.json()["data"]["id"]
-    
-    from app.domain.models import Scene, Project, StoryboardShot
+
     from sqlalchemy import insert
-    # 准备场景
+    from app.domain.models import Character
+
+    await db_session.execute(insert(Character).values(
+        id="C_CONFIRM", project_id=pid, name="ConfirmChar", role_type="supporting"
+    ))
+    await force_stage(db_session, pid, "storyboard_ready")
+
+    resp = await client.post(f"/api/v1/projects/{pid}/characters/confirm")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["stage_raw"] == "characters_locked"
+
+    resp = await client.get(f"/api/v1/projects/{pid}")
+    assert resp.json()["data"]["stage_raw"] == "characters_locked"
+
+
+@pytest.mark.asyncio
+async def test_confirm_scenes_stage_advances_with_existing_scenes(client: AsyncClient, db_session):
+    from tests.helpers import force_stage
+
+    resp = await client.post("/api/v1/projects", json={"name": "Confirm Scenes", "story": "..."})
+    pid = resp.json()["data"]["id"]
+
+    from sqlalchemy import insert
+    from app.domain.models import Scene
+
     await db_session.execute(insert(Scene).values(
-        id="S_ASYNC", project_id=pid, name="AsyncScene", locked=False
+        id="S_CONFIRM", project_id=pid, name="ConfirmScene", locked=False
     ))
-    # 准备分镜并绑定到场景
-    await db_session.execute(insert(StoryboardShot).values(
-        id="SHOT_1", project_id=pid, idx=1, title="Shot 1", scene_id="S_ASYNC"
-    ))
-    # 推进到 characters_locked
     await force_stage(db_session, pid, "characters_locked")
 
-    # 2. 投递场景锁定任务
-    resp = await client.post(f"/api/v1/projects/{pid}/scenes/S_ASYNC/lock", json={})
-    body = resp.json()["data"]
-    assert body["ack"] == "async"
-    assert body["job_id"]
-    
-    # 3. 校验 Job 状态并等待成功 (CELERY_TASK_ALWAYS_EAGER=true)
-    job_id = body["job_id"]
-    resp = await client.get(f"/api/v1/jobs/{job_id}")
-    job_data = resp.json()["data"]
-    assert job_data["kind"] == "lock_scene_asset"
-    assert job_data["payload"]["scene_id"] == "S_ASYNC"
-    assert job_data["status"] == "succeeded"
-    
-    # 4. 校验场景是否已锁定, 且项目阶段已推进
-    resp = await client.get(f"/api/v1/projects/{pid}/scenes")
-    scenes = resp.json()["data"]
-    async_scene = next(s for s in scenes if s["id"] == "S_ASYNC")
-    assert async_scene["locked"] is True
-    
+    resp = await client.post(f"/api/v1/projects/{pid}/scenes/confirm")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["stage_raw"] == "scenes_locked"
+
     resp = await client.get(f"/api/v1/projects/{pid}")
-    project_data = resp.json()["data"]
-    assert project_data["stage_raw"] == "scenes_locked"
+    assert resp.json()["data"]["stage_raw"] == "scenes_locked"

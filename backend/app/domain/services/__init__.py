@@ -4,7 +4,9 @@ from .aggregate_service import AggregateService
 from .storyboard_service import StoryboardService
 from .character_service import CharacterService
 from .scene_service import SceneService
+from .shot_draft_service import ShotDraftService
 from .shot_render_service import ShotRenderService
+from .shot_video_service import ShotVideoService
 
 __all__ = [
     "ProjectService",
@@ -14,5 +16,7 @@ __all__ = [
     "StoryboardService",
     "CharacterService",
     "SceneService",
+    "ShotDraftService",
     "ShotRenderService",
+    "ShotVideoService",
 ]

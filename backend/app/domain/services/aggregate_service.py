@@ -1,7 +1,7 @@
 import json
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.domain.models import Project, StoryboardShot, Job, ExportTask, Character, Scene, ShotRender
+from app.domain.models import Project, StoryboardShot, Job, ExportTask, Character, Scene, ShotRender, ShotVideoRender
 from app.domain.schemas.project import ProjectDetail
 from app.pipeline.states import STAGE_ZH, ProjectStageRaw
 from app.infra.asset_store import build_asset_url
@@ -59,9 +59,19 @@ class AggregateService:
             "payload": j.payload,
             "result": j.result,
         } for j in jobs]
+
+        def _job_meta(item: dict, key: str) -> dict:
+            value = item.get(key)
+            return value if isinstance(value, dict) else {}
+
+        def _resolved_render_id(item: dict) -> str | None:
+            return _job_meta(item, "result").get("render_id") or _job_meta(item, "payload").get("render_id")
+
+        def _resolved_video_render_id(item: dict) -> str | None:
+            return _job_meta(item, "result").get("video_render_id") or _job_meta(item, "payload").get("video_render_id")
         
         queue_render_ids = [
-            item.get("result", {}).get("render_id") or item.get("payload", {}).get("render_id")
+            _resolved_render_id(item)
             for item in generation_queue
             if item.get("kind") == "render_shot"
         ]
@@ -73,8 +83,31 @@ class AggregateService:
             ).scalars().all()
             render_map = {r.id: r for r in current_renders}
 
+        queue_video_render_ids = [
+            _resolved_video_render_id(item)
+            for item in generation_queue
+            if item.get("kind") == "render_shot_video"
+        ]
+        video_render_ids = list({
+            vid
+            for vid in [*(s.current_video_render_id for s in storyboards if getattr(s, "current_video_render_id", None)), *queue_video_render_ids]
+            if vid
+        })
+        video_map: dict[str, ShotVideoRender] = {}
+        if video_render_ids:
+            current_videos = (
+                await self.session.execute(select(ShotVideoRender).where(ShotVideoRender.id.in_(video_render_ids)))
+            ).scalars().all()
+            video_map = {r.id: r for r in current_videos}
+
         latest_render = None
-        if render_ids:
+        if video_render_ids:
+            latest_render = max(
+                (video_map[vid] for vid in video_render_ids if vid in video_map),
+                key=lambda r: r.created_at,
+                default=None,
+            )
+        elif render_ids:
             latest_render = max(
                 (render_map[rid] for rid in render_ids if rid in render_map),
                 key=lambda r: r.created_at,
@@ -87,7 +120,7 @@ class AggregateService:
         progress_text = f"{done_shots} / {total_shots} 已完成" if total_shots > 0 else "0 / 0 已完成"
         
         # 角色 role 中文映射
-        role_map = {"protagonist": "主角", "supporting": "配角", "atmosphere": "氛围"}
+        role_map = {"supporting": "配角", "atmosphere": "氛围"}
 
         def _meta_to_tags(meta: dict | None, video_style_ref: dict | None) -> list[str]:
             tags: list[str] = []
@@ -121,16 +154,21 @@ class AggregateService:
                 "duration_sec": float(s.duration_sec) if s.duration_sec is not None else None,
                 "scene_id": s.scene_id,
                 "current_render_id": s.current_render_id,
+                "current_video_render_id": s.current_video_render_id,
+                "current_video_url": build_asset_url(video_map[s.current_video_render_id].video_url) if getattr(s, "current_video_render_id", None) in video_map else None,
+                "current_last_frame_url": build_asset_url(video_map[s.current_video_render_id].last_frame_url) if getattr(s, "current_video_render_id", None) in video_map else None,
+                "current_video_version_no": video_map[s.current_video_render_id].version_no if getattr(s, "current_video_render_id", None) in video_map else None,
+                "current_video_params_snapshot": video_map[s.current_video_render_id].params_snapshot if getattr(s, "current_video_render_id", None) in video_map else None,
                 "created_at": s.created_at,
                 "updated_at": s.updated_at,
             } for s in storyboards],
             characters=[{
+                "role_type": "supporting" if c.role_type == "protagonist" else c.role_type,
                 "id": c.id,
                 "name": c.name,
-                "role": role_map.get(c.role_type, c.role_type),
-                "role_type": c.role_type,
-                "is_protagonist": c.is_protagonist,
-                "locked": c.locked,
+                "role": role_map.get("supporting" if c.role_type == "protagonist" else c.role_type, "配角"),
+                "is_protagonist": False,
+                "locked": False,
                 "summary": c.summary,
                 "description": c.description,
                 "meta": _meta_to_tags(c.meta, c.video_style_ref),
@@ -143,7 +181,7 @@ class AggregateService:
                 "summary": s.summary,
                 "description": s.description,
                 "meta": _meta_to_tags(s.meta, s.video_style_ref),
-                "locked": s.locked,
+                "locked": False,
                 "template_id": s.template_id,
                 "reference_image_url": build_asset_url(s.reference_image_url),
                 "usage": f"场景复用 {usage_map.get(s.id, 0)} 镜头"
@@ -158,20 +196,20 @@ class AggregateService:
                     **item,
                     "shot_id": item.get("target_id") if item.get("kind") == "render_shot" else None,
                     "render_id": (
-                        item.get("result", {}).get("render_id") or item.get("payload", {}).get("render_id")
+                        _resolved_render_id(item)
                         if item.get("kind") == "render_shot"
                         else None
                     ),
                     "image_url": (
                         build_asset_url(render_map[resolved_render_id].image_url)
                         if item.get("kind") == "render_shot"
-                        and (resolved_render_id := (item.get("result", {}).get("render_id") or item.get("payload", {}).get("render_id"))) in render_map
+                        and (resolved_render_id := _resolved_render_id(item)) in render_map
                         else None
                     ),
                     "version_no": (
                         render_map[resolved_render_id].version_no
                         if item.get("kind") == "render_shot"
-                        and (resolved_render_id := (item.get("result", {}).get("render_id") or item.get("payload", {}).get("render_id"))) in render_map
+                        and (resolved_render_id := _resolved_render_id(item)) in render_map
                         else None
                     ),
                     "shot_status": (
@@ -182,13 +220,64 @@ class AggregateService:
                     "error_code": (
                         render_map[resolved_render_id].error_code
                         if item.get("kind") == "render_shot"
-                        and (resolved_render_id := (item.get("result", {}).get("render_id") or item.get("payload", {}).get("render_id"))) in render_map
+                        and (resolved_render_id := _resolved_render_id(item)) in render_map
                         else None
                     ),
                     "error_msg": (
                         render_map[resolved_render_id].error_msg or item.get("error_msg")
                         if item.get("kind") == "render_shot"
-                        and (resolved_render_id := (item.get("result", {}).get("render_id") or item.get("payload", {}).get("render_id"))) in render_map
+                        and (resolved_render_id := _resolved_render_id(item)) in render_map
+                        else None
+                    ),
+                }
+                if item.get("kind") == "render_shot"
+                else {
+                    **item,
+                    "shot_id": item.get("target_id"),
+                    "video_render_id": (
+                        _resolved_video_render_id(item)
+                        if item.get("kind") == "render_shot_video"
+                        else None
+                    ),
+                    "video_url": (
+                        build_asset_url(video_map[resolved_video_id].video_url)
+                        if item.get("kind") == "render_shot_video"
+                        and (resolved_video_id := _resolved_video_render_id(item)) in video_map
+                        else None
+                    ),
+                    "last_frame_url": (
+                        build_asset_url(video_map[resolved_video_id].last_frame_url)
+                        if item.get("kind") == "render_shot_video"
+                        and (resolved_video_id := _resolved_video_render_id(item)) in video_map
+                        else None
+                    ),
+                    "version_no": (
+                        video_map[resolved_video_id].version_no
+                        if item.get("kind") == "render_shot_video"
+                        and (resolved_video_id := _resolved_video_render_id(item)) in video_map
+                        else None
+                    ),
+                    "params_snapshot": (
+                        video_map[resolved_video_id].params_snapshot
+                        if item.get("kind") == "render_shot_video"
+                        and (resolved_video_id := _resolved_video_render_id(item)) in video_map
+                        else None
+                    ),
+                    "shot_status": (
+                        shot_map[item["target_id"]].status
+                        if item.get("kind") == "render_shot_video" and item.get("target_id") in shot_map
+                        else None
+                    ),
+                    "error_code": (
+                        video_map[resolved_video_id].error_code
+                        if item.get("kind") == "render_shot_video"
+                        and (resolved_video_id := _resolved_video_render_id(item)) in video_map
+                        else None
+                    ),
+                    "error_msg": (
+                        video_map[resolved_video_id].error_msg or item.get("error_msg")
+                        if item.get("kind") == "render_shot_video"
+                        and (resolved_video_id := _resolved_video_render_id(item)) in video_map
                         else None
                     ),
                 }

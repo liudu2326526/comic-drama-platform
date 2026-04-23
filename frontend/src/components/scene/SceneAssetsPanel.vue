@@ -10,7 +10,6 @@ import { useWorkbenchStore } from "@/store/workbench";
 import { useStageGate } from "@/composables/useStageGate";
 import { useJobPolling } from "@/composables/useJobPolling";
 import { useToast } from "@/composables/useToast";
-import { confirm as uiConfirm } from "@/composables/useConfirm";
 import { ApiError, messageFor } from "@/utils/error";
 import type { SceneAsset } from "@/types";
 import type { JobState, SceneUpdate } from "@/types/api";
@@ -20,13 +19,8 @@ const {
   current,
   selectedScene,
   selectedSceneId,
-  currentShot,
   activeGenerateScenesJobId,
-  activeRegenJobEntries,
   generateScenesError,
-  activeLockSceneJobId,
-  activeLockSceneId,
-  lockSceneError
 } = storeToRefs(store);
 const { flags } = useStageGate();
 const toast = useToast();
@@ -62,39 +56,6 @@ const generateProgressLabel = computed(() => {
   if (!j) return "正在排队…";
   if (j.total && j.total > 0) return `正在生成场景… ${j.done}/${j.total}`;
   return `正在生成场景… ${j.progress}%`;
-});
-
-// ---- 场景锁定轮询 ----
-const { job: lockJob } = useJobPolling(activeLockSceneJobId, {
-  onProgress: () => void 0,
-  onSuccess: async () => {
-    try {
-      await store.reload();
-      store.markLockSceneSucceeded();
-      toast.success("场景已锁定");
-    } catch (e) {
-      store.markLockSceneFailed((e as Error).message);
-    }
-  },
-  onError: (j, err) => {
-    const msg =
-      j?.error_msg ??
-      (err instanceof ApiError ? messageFor(err.code, err.message) : "锁定失败");
-    store.markLockSceneFailed(msg);
-    toast.error(msg);
-  }
-});
-
-const lockProgressLabel = computed(() => {
-  const j = lockJob.value;
-  if (!j) return "正在排队…";
-  const stepMap: Record<number, string> = {
-    0: "校验场景与绑定",
-    1: "写入锁定状态",
-    2: "重新计算项目阶段",
-    3: "完成"
-  };
-  return `正在锁定场景… ${stepMap[j.done] ?? `${j.done}/3`}`;
 });
 
 // ---- 单项 regen 轮询(按当前选中项精确找回) ----
@@ -145,7 +106,7 @@ async function handleGenerate() {
 
 function openEdit() {
   if (!flags.value.canEditScenes) {
-    toast.warning("当前阶段已锁定,如需修改请回退阶段", {
+    toast.warning("当前阶段不允许编辑场景,如需修改请回退阶段", {
       action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
     });
     return;
@@ -162,7 +123,7 @@ async function handleEditSubmit(payload: SceneUpdate) {
     editorOpen.value = false;
   } catch (e) {
     if (e instanceof ApiError && e.code === 40301) {
-      toast.warning("当前阶段已锁定,如需修改请回退阶段", {
+      toast.warning("当前阶段不允许编辑场景,如需修改请回退阶段", {
         action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
       });
     } else if (e instanceof ApiError) {
@@ -178,7 +139,7 @@ async function handleEditSubmit(payload: SceneUpdate) {
 async function handleRegen() {
   if (!selectedScene.value) return;
   if (!flags.value.canEditScenes) {
-    toast.warning("当前阶段已锁定,如需修改请回退阶段", {
+    toast.warning("当前阶段不允许编辑场景,如需修改请回退阶段", {
       action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
     });
     return;
@@ -194,50 +155,17 @@ async function handleRegen() {
   }
 }
 
-async function handleBind() {
-  if (!selectedScene.value) return;
-  const shot = currentShot.value;
-  if (!shot) {
-    toast.warning("请先在分镜 Panel 选中一个镜头");
-    return;
-  }
-  if (!flags.value.canBindScene) {
-    toast.warning("当前阶段不允许绑定场景", {
-      action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
-    });
+async function handleConfirmStage() {
+  if (!flags.value.canConfirmScenes) {
+    toast.warning("当前阶段不允许进入镜头生成");
     return;
   }
   busy.value = true;
   try {
-    await store.bindShotScene(shot.id, selectedScene.value.id);
-    toast.success(`镜头 ${String(shot.idx).padStart(2, "0")} 已绑定到「${selectedScene.value.name}」`);
+    await store.confirmScenesStage();
+    toast.success("已进入镜头生成");
   } catch (e) {
-    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "绑定失败");
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function handleLock() {
-  if (!selectedScene.value) return;
-  if (!flags.value.canLockScene) {
-    toast.warning("当前阶段不允许锁定场景", {
-      action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
-    });
-    return;
-  }
-  const ok = await uiConfirm({
-    title: "锁定场景",
-    body: "锁定后描述不可编辑;当项目内所有镜头均已绑定到已锁定场景时,项目会进入 scenes_locked 阶段。",
-    confirmText: "确认锁定",
-    danger: false
-  });
-  if (!ok) return;
-  busy.value = true;
-  try {
-    await store.lockScene(selectedScene.value.id);
-  } catch (e) {
-    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "锁定失败");
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "确认失败");
   } finally {
     busy.value = false;
   }
@@ -256,7 +184,6 @@ const THEME_CLASS: Record<string, string> = {
   harbor: "theme-harbor"
 };
 const themeClass = (s: SceneAsset) => (s.theme ? THEME_CLASS[s.theme] ?? "" : "");
-const selectedIsLocked = computed(() => !!selectedScene.value?.locked);
 
 const selectedRegenJobId = computed(() =>
   selectedScene.value
@@ -272,7 +199,14 @@ const selectedRegenProgress = computed(() =>
 <template>
   <PanelSection v-if="current" kicker="04" title="场景设定">
     <template #actions>
-      <button class="ghost-btn" type="button" disabled>新增场景资产</button>
+      <button
+        class="primary-btn"
+        type="button"
+        :disabled="busy || !flags.canConfirmScenes"
+        @click="handleConfirmStage"
+      >
+        确认进入镜头生成
+      </button>
     </template>
 
     <div v-if="activeGenerateScenesJobId" class="gen-banner running">
@@ -280,15 +214,6 @@ const selectedRegenProgress = computed(() =>
         <strong>{{ generateProgressLabel }}</strong>
       </div>
       <ProgressBar :value="generateJob?.progress ?? 0" />
-    </div>
-
-    <!-- 锁定场景进度 -->
-    <div v-else-if="activeLockSceneJobId" class="gen-banner running">
-      <div class="gen-head">
-        <strong>{{ lockProgressLabel }}</strong>
-      </div>
-      <ProgressBar :value="lockJob ? Math.round((lockJob.done / 3) * 100) : 0" />
-      <p class="hint">正在锁定场景并同步项目阶段,完成后会自动刷新。</p>
     </div>
 
     <div v-else-if="generateScenesError" class="gen-banner error">
@@ -299,22 +224,14 @@ const selectedRegenProgress = computed(() =>
       <p>{{ generateScenesError }}</p>
     </div>
 
-    <div v-else-if="lockSceneError" class="gen-banner error">
-      <div class="gen-head">
-        <strong>场景锁定失败</strong>
-        <button class="ghost-btn small" @click="handleLock">重试</button>
-      </div>
-      <p>{{ lockSceneError }}</p>
-    </div>
-
     <div v-else-if="canStartGenerate" class="empty-cta">
-      <p>尚未生成场景 · 主角锁定后可触发 AI 匹配项目中需要的场景</p>
+      <p>尚未生成场景 · 角色设定确认后可触发 AI 匹配项目中需要的场景</p>
       <button class="primary-btn large" :disabled="starting" @click="handleGenerate">
         {{ starting ? "启动中..." : "生成场景资产" }}
       </button>
     </div>
     <div v-else-if="!current.scenes.length" class="empty-note">
-      尚未生成场景 · 角色锁定后将自动匹配场景
+      尚未生成场景 · 进入场景设定后可触发 AI 生成
     </div>
 
     <div v-if="current.scenes.length" class="asset-browser">
@@ -334,7 +251,6 @@ const selectedRegenProgress = computed(() =>
           >
             <div class="list-item-head">
               <strong>{{ scene.name }}</strong>
-              <span v-if="scene.locked" class="badge">已锁定</span>
             </div>
             <small>{{ scene.summary ?? "" }}</small>
           </button>
@@ -381,47 +297,22 @@ const selectedRegenProgress = computed(() =>
               <p v-else class="faint">暂无 meta</p>
             </article>
 
-            <p class="transition-hint">
-              进入渲染阶段前仍需先完成镜头绑定；这里保留为过渡入口，后续再由更稳定的镜头渲染工作流替代。
-            </p>
-
             <div class="asset-actions">
               <button
                 class="ghost-btn"
-                :disabled="busy || selectedIsLocked || !flags.canEditScenes"
-                :title="selectedIsLocked || !flags.canEditScenes ? '已锁定,如需修改请回退阶段' : '编辑描述'"
+                :disabled="busy || !flags.canEditScenes"
+                :title="flags.canEditScenes ? '编辑描述' : '当前阶段不允许编辑场景,请回退阶段'"
                 @click="openEdit"
               >
                 编辑描述
               </button>
               <button
                 class="ghost-btn"
-                :disabled="busy || selectedIsLocked || selectedHasRegenJob || !flags.canEditScenes"
-                :title="selectedIsLocked || !flags.canEditScenes ? '已锁定,如需修改请回退阶段' : '重新生成参考图'"
+                :disabled="busy || selectedHasRegenJob || !flags.canEditScenes"
+                :title="flags.canEditScenes ? '重新生成参考图' : '当前阶段不允许编辑场景,请回退阶段'"
                 @click="handleRegen"
               >
                 {{ selectedHasRegenJob ? `重生成中…(${selectedRegenProgress}%)` : "重新生成参考图" }}
-              </button>
-              <button
-                class="ghost-btn"
-                :disabled="busy || !flags.canBindScene"
-                :title="flags.canBindScene ? '绑定当前选中镜头到此场景' : '当前阶段不允许绑定场景,请回退阶段'"
-                @click="handleBind"
-              >
-                {{
-                  currentShot
-                    ? `绑定镜头 ${String(currentShot.idx).padStart(2, "0")} → 此场景`
-                    : "绑定当前选中镜头"
-                }}
-              </button>
-              <button
-                v-if="!selectedIsLocked"
-                class="primary-btn"
-                :disabled="busy || !flags.canLockScene || (activeLockSceneId === selectedScene.id)"
-                :title="flags.canLockScene ? '锁定场景' : '当前阶段不允许锁定场景,请回退阶段'"
-                @click="handleLock"
-              >
-                {{ activeLockSceneId === selectedScene.id ? '锁定中...' : '锁定场景' }}
               </button>
             </div>
           </div>
@@ -452,7 +343,6 @@ const selectedRegenProgress = computed(() =>
 .ref-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .asset-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .faint { color: var(--text-faint); font-size: 12px; }
-.transition-hint { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-faint); }
 
 .asset-browser { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; }
 .asset-list-panel { padding: 18px; background: rgba(255,255,255,0.03); border: 1px solid var(--panel-border); border-radius: var(--radius-md); }

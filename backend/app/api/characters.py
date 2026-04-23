@@ -8,16 +8,32 @@ from app.deps import get_db
 from app.domain.models import Character, Job, Project
 from app.domain.schemas.character import (
     CharacterGenerateRequest,
-    CharacterLockRequest,
     CharacterOut,
     CharacterUpdate,
     GenerateJobAck,
 )
 from app.domain.services.character_service import CharacterService
-from app.pipeline.transitions import InvalidTransition, assert_asset_editable, update_job_progress
+from app.pipeline.transitions import InvalidTransition, advance_to_characters_locked, assert_asset_editable, update_job_progress
 from app.tasks.ai.gen_character_asset import gen_character_asset
 
 router = APIRouter(prefix="/projects/{project_id}/characters", tags=["characters"])
+
+
+def _to_character_out(c: Character) -> CharacterOut:
+    normalized_role = "supporting" if c.role_type == "protagonist" else c.role_type
+    role_cn = {"supporting": "配角", "atmosphere": "氛围"}
+    return CharacterOut(
+        id=c.id,
+        name=c.name,
+        role=role_cn.get(normalized_role, normalized_role),
+        role_type=normalized_role,
+        is_protagonist=False,
+        locked=False,
+        summary=c.summary,
+        description=c.description,
+        meta=[],
+        reference_image_url=c.reference_image_url,
+    )
 
 @router.get("", response_model=Envelope[list[CharacterOut]])
 async def list_characters(
@@ -25,23 +41,7 @@ async def list_characters(
     db: AsyncSession = Depends(get_db)
 ):
     chars = await CharacterService.list_by_project(db, project_id)
-    # 角色 role 中文映射
-    role_cn = {"protagonist": "主角", "supporting": "配角", "atmosphere": "氛围"}
-    
-    return Envelope.success([
-        CharacterOut(
-            id=c.id,
-            name=c.name,
-            role=role_cn.get(c.role_type, c.role_type),
-            role_type=c.role_type,
-            is_protagonist=c.is_protagonist,
-            locked=c.locked,
-            summary=c.summary,
-            description=c.description,
-            meta=[], # TODO
-            reference_image_url=c.reference_image_url # TODO: build_asset_url
-        ) for c in chars
-    ])
+    return Envelope.success([_to_character_out(c) for c in chars])
 
 @router.post("/generate", response_model=Envelope[GenerateJobAck])
 async def generate_characters(
@@ -112,20 +112,12 @@ async def update_character(
     except InvalidTransition as e:
         raise ApiError(40301, str(e), http_status=403)
     
-    role_cn = {"protagonist": "主角", "supporting": "配角", "atmosphere": "氛围"}
-    return Envelope.success(CharacterOut(
-        id=char.id, name=char.name, role=role_cn.get(char.role_type, char.role_type),
-        role_type=char.role_type,
-        is_protagonist=char.is_protagonist, locked=char.locked,
-        summary=char.summary, description=char.description,
-        meta=[], reference_image_url=char.reference_image_url
-    ))
+    return Envelope.success(_to_character_out(char))
 
-@router.post("/{cid}/lock", response_model=Envelope[dict])
-async def lock_character(
+@router.post("/{cid}/register_asset", response_model=Envelope[GenerateJobAck])
+async def register_character_asset(
     project_id: str = Path(..., description="项目 ID"),
     cid: str = Path(..., description="角色 ID"),
-    req: CharacterLockRequest = None,
     db: AsyncSession = Depends(get_db)
 ):
     project = await db.get(Project, project_id)
@@ -134,13 +126,27 @@ async def lock_character(
         raise ApiError(40401, "资源不存在", http_status=404)
     
     try:
-        as_proto = bool(req and req.as_protagonist)
-        if as_proto:
-            job_id = await CharacterService.lock_protagonist_async(db, project, char)
-            return Envelope.success({"job_id": job_id, "sub_job_ids": [], "ack": "async"})
-            
-        body = await CharacterService.lock(db, project, char)
-        return Envelope.success({**body, "ack": "sync"})
+        body = await CharacterService.register_asset_async(db, project, char)
+        return Envelope.success(GenerateJobAck(**body))
+    except InvalidTransition as e:
+        raise ApiError(40301, str(e), http_status=403)
+    except ApiError:
+        raise
+
+
+@router.post("/confirm", response_model=Envelope[dict])
+async def confirm_characters_stage(
+    project_id: str = Path(..., description="项目 ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await db.get(Project, project_id)
+    if not project:
+        raise ApiError(40401, "项目不存在", http_status=404)
+
+    try:
+        await advance_to_characters_locked(db, project)
+        await db.commit()
+        return Envelope.success({"stage": project.stage, "stage_raw": project.stage})
     except InvalidTransition as e:
         raise ApiError(40301, str(e), http_status=403)
 

@@ -13,9 +13,9 @@ describe("charactersApi request shape", () => {
     expect(spy).toHaveBeenCalledWith("/projects/pid/characters");
   });
 
-  it("generate → POST /projects/:id/characters/generate with body", async () => {
+  it("generate uses 60s timeout for extract_characters ack request", async () => {
     const spy = vi.spyOn(client, "post").mockResolvedValue({
-      data: { job_id: "J1", sub_job_ids: ["s1", "s2"] }
+      data: { job_id: "J1", sub_job_ids: [] }
     } as never);
     const r = await charactersApi.generate("pid", { extra_hints: ["美强惨"] });
     expect(spy).toHaveBeenCalledWith(
@@ -24,7 +24,7 @@ describe("charactersApi request shape", () => {
       { timeout: 60_000 }
     );
     expect(r.job_id).toBe("J1");
-    expect(r.sub_job_ids).toEqual(["s1", "s2"]);
+    expect(r.sub_job_ids).toEqual([]);
   });
 
   it("update → PATCH /projects/:id/characters/:cid", async () => {
@@ -46,31 +46,29 @@ describe("charactersApi request shape", () => {
     expect(r.job_id).toBe("J2");
   });
 
-  it("lock(async) → POST /projects/:id/characters/:cid/lock with as_protagonist=true returns ack=async + job_id", async () => {
+  it("registerAsset → POST /projects/:id/characters/:cid/register_asset", async () => {
     const spy = vi.spyOn(client, "post").mockResolvedValue({
-      data: { ack: "async", job_id: "LJ1", sub_job_ids: [] }
+      data: { job_id: "LJ1", sub_job_ids: [] }
     } as never);
-    const r = await charactersApi.lock("pid", "c1", { as_protagonist: true });
+    const r = await charactersApi.registerAsset("pid", "c1");
     expect(spy).toHaveBeenCalledWith(
-      "/projects/pid/characters/c1/lock",
-      { as_protagonist: true },
+      "/projects/pid/characters/c1/register_asset",
+      {},
       { timeout: 30_000 }
     );
-    expect(r.ack).toBe("async");
-    if (r.ack === "async") expect(r.job_id).toBe("LJ1");
+    expect(r.job_id).toBe("LJ1");
   });
 
-  it("lock(sync) → POST /projects/:id/characters/:cid/lock with as_protagonist=false returns ack=sync + locked", async () => {
+  it("confirmStage → POST /projects/:id/characters/confirm", async () => {
     const spy = vi.spyOn(client, "post").mockResolvedValue({
-      data: { ack: "sync", id: "c1", locked: true, is_protagonist: false }
+      data: { stage: "characters_locked", stage_raw: "characters_locked" }
     } as never);
-    const r = await charactersApi.lock("pid", "c1", { as_protagonist: false });
+    const r = await charactersApi.confirmStage("pid");
     expect(spy).toHaveBeenCalledWith(
-      "/projects/pid/characters/c1/lock",
-      { as_protagonist: false },
+      "/projects/pid/characters/confirm",
+      {},
       { timeout: 30_000 }
     );
-    expect(r.ack).toBe("sync");
-    if (r.ack === "sync") expect(r.locked).toBe(true);
+    expect(r.stage_raw).toBe("characters_locked");
   });
 });

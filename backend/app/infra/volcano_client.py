@@ -38,6 +38,14 @@ class VolcanoClient(ABC):
     ) -> Any:
         pass
 
+    @abstractmethod
+    async def video_generations_create(self, **kwargs: Any) -> Any:
+        pass
+
+    @abstractmethod
+    async def video_generations_get(self, task_id: str) -> Any:
+        pass
+
 
 class _ChatResponse:
     """兼容 mock 和 openai SDK 的响应结构。"""
@@ -164,6 +172,21 @@ class MockVolcanoClient(VolcanoClient):
         print(f"\n[AI Image Output] Model: {model}\nURL: {img_url}\n")
         return {"data": [{"url": img_url}]}
 
+    async def video_generations_create(self, **kwargs: Any) -> Any:
+        logger.info("Mock Volcano Video Create")
+        return {"id": "mock-video-task"}
+
+    async def video_generations_get(self, task_id: str) -> Any:
+        logger.info("Mock Volcano Video Get")
+        return {
+            "id": task_id,
+            "status": "succeeded",
+            "content": {
+                "video_url": "https://placehold.co/720x1280.mp4",
+                "last_frame_url": "https://placehold.co/720x1280.png?text=Mock+Last+Frame",
+            },
+        }
+
 
 class RealVolcanoClient(VolcanoClient):
     """
@@ -185,7 +208,7 @@ class RealVolcanoClient(VolcanoClient):
         )
         self._settings = s
 
-    async def _request_with_retry(self, method: str, path: str, json_body: dict) -> dict:
+    async def _request_with_retry(self, method: str, path: str, json_body: dict | None = None) -> dict:
         last_exc: Exception | None = None
         for attempt in range(self._settings.ai_retry_max):
             try:
@@ -230,18 +253,10 @@ class RealVolcanoClient(VolcanoClient):
         **kwargs: Any,
     ) -> Any:
         if references:
-            content = [{"type": "text", "text": prompt}]
-            for ref in references:
-                content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": ref},
-                        "role": "reference_image",
-                    }
-                )
             body = {
                 "model": model,
-                "content": content,
+                "prompt": prompt,
+                "image": references,
                 "response_format": "url",
                 "watermark": False,
                 **kwargs,
@@ -264,6 +279,40 @@ class RealVolcanoClient(VolcanoClient):
         urls = [item.get("url") for item in resp_json.get("data", [])]
         print(f"\n[AI Image Output] Model: {model}\nURLs: {urls}\n")
         return resp_json
+
+    async def video_generations_create(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        references: list[str],
+        duration: int | None,
+        resolution: str,
+        ratio: str,
+        generate_audio: bool = False,
+        watermark: bool = False,
+        return_last_frame: bool = True,
+        execution_expires_after: int = 3600,
+    ) -> dict:
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for url in references:
+            content.append({"type": "image_url", "role": "reference_image", "image_url": {"url": url}})
+        body = {
+            "model": model,
+            "content": content,
+            "resolution": resolution,
+            "ratio": ratio,
+            "generate_audio": generate_audio,
+            "watermark": watermark,
+            "return_last_frame": return_last_frame,
+            "execution_expires_after": execution_expires_after,
+        }
+        if duration is not None:
+            body["duration"] = duration
+        return await self._request_with_retry("POST", "/contents/generations/tasks", body)
+
+    async def video_generations_get(self, task_id: str) -> dict:
+        return await self._request_with_retry("GET", f"/contents/generations/tasks/{task_id}", None)
 
 
 def get_volcano_client() -> VolcanoClient:
