@@ -32,6 +32,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("DELETE FROM jobs WHERE kind = 'extract_characters'")
     op.execute(
         """
         ALTER TABLE jobs MODIFY COLUMN kind ENUM(
