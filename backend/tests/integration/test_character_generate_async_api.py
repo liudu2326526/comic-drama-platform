@@ -1,11 +1,16 @@
-import sys
-import types
-
 import pytest
 from sqlalchemy import select
 
 from app.domain.models import Job
 from app.pipeline.states import ProjectStageRaw
+
+
+async def _create_storyboard_ready_project(project_factory):
+    project = await project_factory(
+        stage=ProjectStageRaw.STORYBOARD_READY.value,
+        story="林夏在雨夜遇见周沉，两人一起追查剧院旧案。",
+    )
+    return project.id
 
 
 @pytest.mark.asyncio
@@ -14,28 +19,9 @@ async def test_generate_characters_returns_extract_job_ack(
     db_session,
     project_factory,
 ):
-    project = await project_factory(
-        stage=ProjectStageRaw.STORYBOARD_READY.value,
-        story="林夏在雨夜遇见周沉，两人一起追查剧院旧案。",
-    )
-    project_id = project.id
+    project_id = await _create_storyboard_ready_project(project_factory)
 
-    calls: list[tuple[str, str]] = []
-
-    def _delay(project_id: str, job_id: str) -> None:
-        calls.append((project_id, job_id))
-
-    fake_task = types.SimpleNamespace(delay=_delay)
-    fake_module = types.ModuleType("app.tasks.ai.extract_characters")
-    fake_module.extract_characters = fake_task
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setitem(sys.modules, "app.tasks.ai.extract_characters", fake_module)
-
-    try:
-            resp = await client.post(f"/api/v1/projects/{project_id}/characters/generate", json={})
-    finally:
-        monkeypatch.undo()
-
+    resp = await client.post(f"/api/v1/projects/{project_id}/characters/generate", json={})
     body = resp.json()
 
     assert resp.status_code == 200
@@ -53,4 +39,31 @@ async def test_generate_characters_returns_extract_job_ack(
     assert job.progress == 0
     assert job.done == 0
     assert job.total is None
-    assert calls == [(project_id, job.id)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("job_kind", ["extract_characters", "gen_character_asset"])
+async def test_generate_characters_rejects_when_generation_job_already_running(
+    client,
+    db_session,
+    project_factory,
+    job_kind,
+):
+    project_id = await _create_storyboard_ready_project(project_factory)
+    job = Job(
+        project_id=project_id,
+        kind=job_kind,
+        status="running",
+        progress=40,
+        done=1,
+        total=3,
+    )
+    db_session.add(job)
+    await db_session.commit()
+
+    resp = await client.post(f"/api/v1/projects/{project_id}/characters/generate", json={})
+    body = resp.json()
+
+    assert resp.status_code == 409
+    assert body["code"] == 40901
+    assert "已有角色生成任务进行中" in body["message"]

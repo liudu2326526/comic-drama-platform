@@ -1,5 +1,6 @@
 from .parse_novel import parse_novel
 from .gen_storyboard import gen_storyboard
+from .extract_characters import extract_characters
 from .gen_character_asset import gen_character_asset
 from .gen_scene_asset import gen_scene_asset
 from .register_character_asset import register_character_asset
@@ -10,6 +11,7 @@ from .render_shot import render_shot_task
 __all__ = [
     "parse_novel", 
     "gen_storyboard", 
+    "extract_characters",
     "gen_character_asset", 
     "gen_scene_asset", 
     "register_character_asset",
