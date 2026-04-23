@@ -9,6 +9,7 @@ from app.infra.ulid import new_id
 JOB_KIND_VALUES = [
     "parse_novel",
     "gen_storyboard",
+    "extract_characters",
     "gen_character_asset",
     "gen_character_asset_single",
     "gen_scene_asset",
