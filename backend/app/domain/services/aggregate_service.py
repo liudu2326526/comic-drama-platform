@@ -3,6 +3,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.models import Project, StoryboardShot, Job, ExportTask, Character, Scene, ShotRender
 from app.domain.schemas.project import ProjectDetail
+from app.domain.schemas.prompt_profile import derive_prompt_profile_state
 from app.pipeline.states import STAGE_ZH, ProjectStageRaw
 from app.infra.asset_store import build_asset_url
 
@@ -110,6 +111,14 @@ class AggregateService:
             parsedStats=project.parsed_stats or [],
             setupParams=project.setup_params or [],
             projectOverview=project.overview or "",
+            characterPromptProfile=derive_prompt_profile_state(
+                project.character_prompt_profile_draft,
+                project.character_prompt_profile_applied,
+            ),
+            scenePromptProfile=derive_prompt_profile_state(
+                project.scene_prompt_profile_draft,
+                project.scene_prompt_profile_applied,
+            ),
             storyboards=[{
                 "id": s.id,
                 "idx": s.idx,

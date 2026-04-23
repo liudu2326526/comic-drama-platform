@@ -19,6 +19,10 @@ JOB_KIND_VALUES = [
     "render_shot",
     "render_batch",
     "export_video",
+    "gen_character_prompt_profile",
+    "gen_scene_prompt_profile",
+    "regen_character_assets_batch",
+    "regen_scene_assets_batch",
 ]
 JOB_STATUS_VALUES = ["queued", "running", "succeeded", "failed", "canceled"]
 

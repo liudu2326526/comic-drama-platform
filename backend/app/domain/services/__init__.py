@@ -5,6 +5,7 @@ from .storyboard_service import StoryboardService
 from .character_service import CharacterService
 from .scene_service import SceneService
 from .shot_render_service import ShotRenderService
+from .prompt_profile_service import PromptProfileService
 
 __all__ = [
     "ProjectService",
@@ -15,4 +16,5 @@ __all__ = [
     "CharacterService",
     "SceneService",
     "ShotRenderService",
+    "PromptProfileService",
 ]

@@ -10,6 +10,12 @@ from .project import (
 )
 from .storyboard import StoryboardUpdate, StoryboardReorderRequest
 from .job import JobSummary, JobDetail
+from .prompt_profile import (
+    PromptProfileDraftUpdate,
+    PromptProfilePayload,
+    PromptProfileState,
+    derive_prompt_profile_state,
+)
 from .character import (
     CharacterOut,
     CharacterUpdate,
@@ -42,6 +48,10 @@ __all__ = [
     "StoryboardReorderRequest",
     "JobSummary",
     "JobDetail",
+    "PromptProfileDraftUpdate",
+    "PromptProfilePayload",
+    "PromptProfileState",
+    "derive_prompt_profile_state",
     "CharacterOut",
     "CharacterUpdate",
     "CharacterGenerateRequest",
