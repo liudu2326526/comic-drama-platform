@@ -14,7 +14,7 @@ from app.domain.schemas.character import (
     GenerateJobAck,
 )
 from app.domain.services.character_service import CharacterService
-from app.pipeline.transitions import InvalidTransition, assert_asset_editable
+from app.pipeline.transitions import InvalidTransition, assert_asset_editable, update_job_progress
 from app.tasks.ai.gen_character_asset import gen_character_asset
 
 router = APIRouter(prefix="/projects/{project_id}/characters", tags=["characters"])
@@ -81,7 +81,17 @@ async def generate_characters(
 
     from app.tasks.ai.extract_characters import extract_characters
 
-    extract_characters.delay(project_id, job.id)
+    try:
+        extract_characters.delay(project_id, job.id)
+    except Exception as exc:
+        await update_job_progress(
+            db,
+            job.id,
+            status="failed",
+            error_msg=f"dispatch failed: {exc}",
+        )
+        await db.commit()
+        raise
     return Envelope.success(GenerateJobAck(job_id=job.id, sub_job_ids=[]))
 
 @router.patch("/{cid}", response_model=Envelope[CharacterOut])
