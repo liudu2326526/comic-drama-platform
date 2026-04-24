@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import GenerationPanel from "@/components/generation/GenerationPanel.vue";
+import ReferencePickerModal from "@/components/generation/ReferencePickerModal.vue";
 import { shotsApi } from "@/api/shots";
 import { useWorkbenchStore } from "@/store/workbench";
 
@@ -241,6 +242,25 @@ describe("GenerationPanel", () => {
     expect(store.generateRenderDraft).toHaveBeenCalledWith("SH1");
   });
 
+  it("saves current prompt and references before generating draft", async () => {
+    const { wrapper, store } = mountPanel();
+    await flushPromises();
+    const updateSpy = vi.spyOn(store, "updateRenderDraft");
+    const textarea = wrapper.get<HTMLTextAreaElement>('[data-testid="draft-prompt"]');
+
+    await textarea.setValue("生成前编辑过的提示词");
+    updateSpy.mockClear();
+    await wrapper.get('[data-testid="generate-draft-btn"]').trigger("click");
+
+    expect(updateSpy).toHaveBeenCalledWith("SH1", {
+      prompt: "生成前编辑过的提示词",
+      references: expect.arrayContaining([
+        expect.objectContaining({ id: "scene-1", name: "长安殿" }),
+      ]),
+    });
+    expect(store.generateRenderDraft).toHaveBeenCalledWith("SH1");
+  });
+
   it("allows generating draft on another shot while a different draft job is running", async () => {
     const { wrapper, store } = await mountPanelWithActiveDraftOnAnotherShot();
     await flushPromises();
@@ -257,6 +277,25 @@ describe("GenerationPanel", () => {
     const { wrapper, store } = mountPanel();
     await flushPromises();
     await wrapper.get('[data-testid="generate-video-btn"]').trigger("click");
+    expect(store.generateVideoFromDraft).toHaveBeenCalledWith("SH1");
+  });
+
+  it("saves current prompt and references before generating video", async () => {
+    const { wrapper, store } = mountPanel();
+    await flushPromises();
+    const updateSpy = vi.spyOn(store, "updateRenderDraft");
+    const textarea = wrapper.get<HTMLTextAreaElement>('[data-testid="draft-prompt"]');
+
+    await textarea.setValue("视频生成前编辑过的提示词");
+    updateSpy.mockClear();
+    await wrapper.get('[data-testid="generate-video-btn"]').trigger("click");
+
+    expect(updateSpy).toHaveBeenCalledWith("SH1", {
+      prompt: "视频生成前编辑过的提示词",
+      references: expect.arrayContaining([
+        expect.objectContaining({ id: "scene-1", name: "长安殿" }),
+      ]),
+    });
     expect(store.generateVideoFromDraft).toHaveBeenCalledWith("SH1");
   });
 
@@ -322,5 +361,121 @@ describe("GenerationPanel", () => {
     await flushPromises();
     expect(wrapper.text()).not.toContain("最近一次生成失败");
     expect(wrapper.text()).not.toContain("MissingParameter");
+  });
+
+  it("closes the reference picker after adding a candidate", async () => {
+    const { pinia, store } = setupStore();
+    vi.spyOn(store, "referenceCandidatesFor").mockReturnValue([
+      {
+        id: "history-1",
+        kind: "history",
+        source_id: "R2",
+        name: "视频尾帧 v1",
+        alias: "视频尾帧 v1",
+        mention_key: "history:R2:last_frame",
+        image_url: "https://example.com/history.png",
+        origin: "history",
+        reason: "当前项目已生成视频尾帧",
+      },
+    ]);
+    const wrapper = mount(GenerationPanel, { global: { plugins: [pinia] } });
+    await flushPromises();
+
+    await wrapper.get(".add-reference").trigger("click");
+    expect(wrapper.text()).toContain("添加参考图");
+
+    await wrapper.get(".candidate-card").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain("添加参考图");
+    expect(wrapper.text()).toContain("视频尾帧 v1");
+    expect(wrapper.text()).toContain("2/6 张");
+  });
+
+  it("does not overwrite the whole prompt when @ is typed while all text is selected", async () => {
+    const { wrapper } = mountPanel();
+    await flushPromises();
+
+    const textarea = wrapper.get<HTMLTextAreaElement>('[data-testid="draft-prompt"]');
+    textarea.element.setSelectionRange(0, textarea.element.value.length);
+    await textarea.setValue("@");
+    await flushPromises();
+
+    expect(textarea.element.value).toBe("原样提示词@");
+    expect(wrapper.find('[data-testid="reference-mention-menu"]').exists()).toBe(true);
+
+    textarea.element.setSelectionRange(0, "原样提示词".length);
+    await wrapper.get(".mention-option").trigger("mousedown");
+    await flushPromises();
+
+    expect(textarea.element.value).toBe("原样提示词@长安殿 ");
+  });
+
+  it("replaces only the trailing @ when the prompt already starts with a reference", async () => {
+    const { wrapper } = mountPanel();
+    await flushPromises();
+
+    const textarea = wrapper.get<HTMLTextAreaElement>('[data-testid="draft-prompt"]');
+    await textarea.setValue("@图1作为核心场景基础@");
+    textarea.element.setSelectionRange(textarea.element.value.length, textarea.element.value.length);
+    await flushPromises();
+
+    await wrapper.get(".mention-option").trigger("mousedown");
+    await flushPromises();
+
+    expect(textarea.element.value).toBe("@图1作为核心场景基础@长安殿 ");
+  });
+
+  it("does not open mention options for an old reference far before the cursor", async () => {
+    const { wrapper } = mountPanel();
+    await flushPromises();
+
+    const textarea = wrapper.get<HTMLTextAreaElement>('[data-testid="draft-prompt"]');
+    await textarea.setValue("@图1作为核心场景基础，8s，厚重乌云覆盖整座皇城上空，固定机位远景拍摄，画面无崩坏");
+    textarea.element.setSelectionRange(textarea.element.value.length, textarea.element.value.length);
+    await textarea.trigger("focus");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="reference-mention-menu"]').exists()).toBe(false);
+  });
+
+  it("opens mention options when @ is typed in the middle of the prompt", async () => {
+    const { wrapper } = mountPanel();
+    await flushPromises();
+
+    const textarea = wrapper.get<HTMLTextAreaElement>('[data-testid="draft-prompt"]');
+    textarea.element.value = "前半段@，后半段";
+    textarea.element.setSelectionRange("前半段@".length, "前半段@".length);
+    await textarea.trigger("input");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="reference-mention-menu"]').exists()).toBe(true);
+
+    await wrapper.get(".mention-option").trigger("mousedown");
+    await flushPromises();
+
+    expect(textarea.element.value).toBe("前半段@长安殿 ，后半段");
+  });
+
+  it("disables manual reference submit until name and asset url are filled", async () => {
+    const wrapper = mount(ReferencePickerModal, {
+      props: {
+        open: true,
+        candidates: [],
+        selected: [],
+        maxCount: 6,
+      },
+    });
+
+    const submit = () => wrapper.get<HTMLButtonElement>(".manual-form button");
+    expect(submit().attributes("disabled")).toBeDefined();
+
+    await wrapper.get('input[placeholder="名称"]').setValue("手动图");
+    expect(submit().attributes("disabled")).toBeDefined();
+
+    await wrapper
+      .get('input[placeholder="projects/{project_id}/... 或 OBS 项目 URL"]')
+      .setValue("projects/P1/manual/ref.png");
+    expect(submit().attributes("disabled")).toBeUndefined();
   });
 });

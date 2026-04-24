@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -140,10 +141,73 @@ class MockVolcanoClient(VolcanoClient):
             print(f"\n[AI Chat Output] Model: {model}\nContent: {resp_str}\n")
             return _ChatResponse(resp_str)
 
-        # 2. 分镜生成任务 (gen_storyboard)
-        elif "分镜" in user_msg:
+        # 2.1 分镜片段扩写任务 (gen_storyboard V2)
+        elif "具体分镜" in user_msg and "beats" in user_msg:
+            match = re.search(r'"idx":\s*(\d+)', user_msg)
+            idx = int(match.group(1)) if match else 1
+            content = {
+                "idx": idx,
+                "title": f"分镜 {idx}",
+                "description": f"这是第 {idx} 个 8 秒视频片段，按原文展开关键动作和情绪变化。",
+                "detail": (
+                    "8秒，9:16竖屏。0-3s：远景固定机位展示场景氛围；"
+                    "3-6s：中景缓慢推进至角色动作；6-8s：特写捕捉情绪反应，光影压抑。"
+                ),
+                "duration_sec": 8,
+                "tags": [f"分镜{idx}", "测试场景", "压抑"],
+                "beats": [
+                    {
+                        "time": "0-3s",
+                        "shot_type": "远景",
+                        "camera_movement": "固定机位",
+                        "action": "展示场景氛围",
+                        "visual": "冷色光影",
+                    },
+                    {
+                        "time": "3-6s",
+                        "shot_type": "中景",
+                        "camera_movement": "缓慢推进",
+                        "action": "角色完成关键动作",
+                        "visual": "雨雾弥散",
+                    },
+                    {
+                        "time": "6-8s",
+                        "shot_type": "特写",
+                        "camera_movement": "固定机位",
+                        "action": "捕捉情绪反应",
+                        "visual": "压抑暗调",
+                    },
+                ],
+            }
+            resp_str = json.dumps(content, ensure_ascii=False)
+            print(f"\n[AI Chat Output] Model: {model}\nContent: {resp_str}\n")
+            return _ChatResponse(resp_str)
+
+        # 2.2 分镜片段规划任务 (gen_storyboard V2)
+        elif "视频片段级分镜" in user_msg:
             storyboards = []
             for i in range(1, 11):  # 固定返回 10 条
+                storyboards.append(
+                    {
+                        "idx": i,
+                        "title": f"分镜 {i}",
+                        "description": f"这是第 {i} 个视频片段的剧情描述内容。",
+                        "duration_sec": 8,
+                        "source_query": f"勇敢 小骑士 分镜 {i}",
+                        "key_characters": ["小骑士"],
+                        "key_scene": "测试场景",
+                        "narrative_purpose": "推动剧情",
+                        "tags": [f"分镜{i}", "小骑士", "测试场景"],
+                    }
+                )
+            resp_str = json.dumps(storyboards, ensure_ascii=False)
+            print(f"\n[AI Chat Output] Model: {model}\nContent: {resp_str}\n")
+            return _ChatResponse(resp_str)
+
+        # 2.3 旧分镜生成任务兼容
+        elif "分镜" in user_msg:
+            storyboards = []
+            for i in range(1, 11):
                 storyboards.append(
                     {
                         "idx": i,
@@ -153,7 +217,7 @@ class MockVolcanoClient(VolcanoClient):
                         "duration_sec": 5.0,
                     }
                 )
-            resp_str = json.dumps(storyboards)
+            resp_str = json.dumps(storyboards, ensure_ascii=False)
             print(f"\n[AI Chat Output] Model: {model}\nContent: {resp_str}\n")
             return _ChatResponse(resp_str)
 

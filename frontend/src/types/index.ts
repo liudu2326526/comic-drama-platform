@@ -78,6 +78,9 @@ export interface RenderShotItem {
   shotStatus: string;
   status: RenderStatus;
   progress: number;
+  displayProgress?: number | null;
+  estimatedRemainingSeconds?: number | null;
+  estimatedSource?: string | null;
   currentRenderId: string | null;
   currentVideoRenderId: string | null;
   imageUrl: string | null;

@@ -6,6 +6,7 @@ from .character_service import CharacterService
 from .scene_service import SceneService
 from .shot_draft_service import ShotDraftService
 from .shot_render_service import ShotRenderService
+from .shot_reference_service import ShotReferenceService
 from .shot_video_service import ShotVideoService
 from .prompt_profile_service import PromptProfileService
 
@@ -19,6 +20,7 @@ __all__ = [
     "SceneService",
     "ShotDraftService",
     "ShotRenderService",
+    "ShotReferenceService",
     "ShotVideoService",
     "PromptProfileService",
 ]

@@ -26,6 +26,9 @@ class StoryboardShot(Base, TimestampMixin):
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_sec: Mapped[float | None] = mapped_column(DECIMAL(4, 1), nullable=True)
     tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    source_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_anchor: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    beats: Mapped[list | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(
         Enum(*STORYBOARD_STATUS_VALUES, name="storyboard_status"),
         nullable=False,

@@ -3,12 +3,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.domain.schemas.reference import ReferenceMention
 from app.domain.schemas.shot_render import RenderSubmitReference
 
 
 class ShotVideoSubmitRequest(BaseModel):
     prompt: str = Field(min_length=1)
     references: list[RenderSubmitReference] = Field(min_length=1)
+    reference_mentions: list[ReferenceMention] = Field(default_factory=list)
     duration: int | None = Field(default=None, ge=4, le=15)
     resolution: Literal["480p", "720p"]
     model_type: Literal["standard", "fast"]

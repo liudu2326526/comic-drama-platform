@@ -20,6 +20,8 @@ import type {
   SceneGenerateRequest,
   SceneUpdate,
   JobState,
+  ReferenceAssetCreate,
+  ReferenceCandidate,
   PromptProfileKind,
   PromptProfileState,
   RenderDraftRead,
@@ -68,8 +70,10 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   const draftJobs = ref<Record<string, { projectId: string; jobId: string }>>({});
   const draftErrors = ref<Record<string, string | null>>({});
   const renderJob = ref<{ projectId: string; jobId: string; shotId: string } | null>(null);
+  const activeRenderJobState = ref<JobState | null>(null);
   const renderError = ref<string | null>(null);
   const renderDrafts = ref<Record<string, RenderDraftRead>>({});
+  const referenceCandidates = ref<Record<string, ReferenceCandidate[]>>({});
   const renderVersions = ref<Record<string, RenderVersionRead[]>>({});
   const videoDraftOptions = ref<Record<string, {
     duration: ShotVideoDurationPreset | null;
@@ -224,6 +228,7 @@ export const useWorkbenchStore = defineStore("workbench", () => {
           )
       );
       const isActive = activeRenderShotId.value === shot.id;
+      const activeProgress = isActive ? activeRenderJobState.value : null;
       return {
         shotId: shot.id,
         title: `镜头 ${String(shot.idx).padStart(2, "0")}`,
@@ -231,8 +236,13 @@ export const useWorkbenchStore = defineStore("workbench", () => {
         shotStatus: queue?.shot_status ?? shot.status,
         status: mapJobStatusToRenderStatus(queue?.status, queue?.shot_status ?? shot.status),
         progress:
+          activeProgress?.display_progress ??
+          activeProgress?.progress ??
           queue?.progress ??
           (shot.status === "failed" ? 0 : shot.status === "generating" ? 1 : 100),
+        displayProgress: activeProgress?.display_progress ?? null,
+        estimatedRemainingSeconds: activeProgress?.estimated_remaining_seconds ?? null,
+        estimatedSource: activeProgress?.estimated_source ?? null,
         currentRenderId: shot.current_render_id,
         currentVideoRenderId: shot.current_video_render_id ?? null,
         imageUrl: queue?.image_url ?? null,
@@ -259,12 +269,14 @@ export const useWorkbenchStore = defineStore("workbench", () => {
       current.value = await projectsApi.get(id);
       if (shouldResetRenderState) {
         renderDrafts.value = {};
+        referenceCandidates.value = {};
         renderVersions.value = {};
         videoDraftOptions.value = {};
         videoVersions.value = {};
         draftJobs.value = {};
         draftErrors.value = {};
         renderJob.value = null;
+        activeRenderJobState.value = null;
         renderError.value = null;
       }
       if (!current.value.storyboards.some((s) => s.id === selectedShotId.value)) {
@@ -347,11 +359,13 @@ export const useWorkbenchStore = defineStore("workbench", () => {
             (a, b) =>
               new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
           )[0];
-      const runningAny = (kinds: string[]) =>
-        jobs.find(
-          (j: JobState) =>
-            kinds.includes(j.kind) && (j.status === "queued" || j.status === "running")
-        );
+      const runningAny = (kinds: string[]) => {
+        for (const kind of kinds) {
+          const job = running(kind);
+          if (job) return job;
+        }
+        return undefined;
+      };
       const lastFailedAny = (kinds: string[]) =>
         jobs
           .filter((j: JobState) => kinds.includes(j.kind) && j.status === "failed")
@@ -729,6 +743,27 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     renderDrafts.value[shotId] = { ...currentDraft, ...patch };
   }
 
+  async function fetchReferenceCandidates(shotId: string): Promise<ReferenceCandidate[]> {
+    if (!current.value) throw new Error("fetchReferenceCandidates: no current project");
+    const rows = await shotsApi.listReferenceCandidates(current.value.id, shotId);
+    referenceCandidates.value[shotId] = rows;
+    return rows;
+  }
+
+  function referenceCandidatesFor(shotId: string): ReferenceCandidate[] {
+    return referenceCandidates.value[shotId] ?? [];
+  }
+
+  async function registerManualReference(
+    shotId: string,
+    payload: ReferenceAssetCreate
+  ): Promise<ReferenceCandidate> {
+    if (!current.value) throw new Error("registerManualReference: no current project");
+    const item = await shotsApi.registerReferenceAsset(current.value.id, shotId, payload);
+    referenceCandidates.value[shotId] = [item, ...referenceCandidatesFor(shotId).filter((row) => row.id !== item.id)];
+    return item;
+  }
+
   function ensureVideoDraftOptions(shotId: string) {
     if (!videoDraftOptions.value[shotId]) {
       videoDraftOptions.value[shotId] = {
@@ -769,9 +804,11 @@ export const useWorkbenchStore = defineStore("workbench", () => {
 
     const options = ensureVideoDraftOptions(shotId);
     renderError.value = null;
+    const referenceMentions = extractReferenceMentions(draft.prompt, draft.references);
     const payload = {
       prompt: draft.prompt,
-      references: draft.references.map(({ id, kind, source_id, name, image_url }) => ({ id, kind, source_id, name, image_url })),
+      references: draft.references.map(toSubmitReference),
+      ...(referenceMentions.length ? { reference_mentions: referenceMentions } : {}),
       resolution: options.resolution,
       model_type: options.modelType,
       ...(options.duration !== null ? { duration: options.duration } : {}),
@@ -835,6 +872,7 @@ export const useWorkbenchStore = defineStore("workbench", () => {
 
   function markRenderSucceeded() {
     renderJob.value = null;
+    activeRenderJobState.value = null;
     renderError.value = null;
   }
 
@@ -850,7 +888,42 @@ export const useWorkbenchStore = defineStore("workbench", () => {
 
   function markRenderFailed(msg: string) {
     renderJob.value = null;
+    activeRenderJobState.value = null;
     renderError.value = msg;
+  }
+
+  function applyRenderJobProgress(job: JobState) {
+    activeRenderJobState.value = job;
+  }
+
+  function extractReferenceMentions(prompt: string, references: RenderDraftRead["references"]) {
+    const seen = new Set<string>();
+    const mentions = references.flatMap((item, index) => {
+      const mentionKey = item.mention_key ?? item.id;
+      const labels = [item.alias ?? item.name, `图${index + 1}`, `图片${index + 1}`];
+      for (const label of labels) {
+        if (!label || seen.has(mentionKey)) continue;
+        if (prompt.includes(`@${label}`)) {
+          seen.add(mentionKey);
+          return [{ mention_key: mentionKey, label }];
+        }
+      }
+      return [];
+    });
+    return mentions;
+  }
+
+  function toSubmitReference(item: RenderDraftRead["references"][number]) {
+    return {
+      id: item.id,
+      kind: item.kind,
+      source_id: item.source_id,
+      name: item.name,
+      image_url: item.image_url,
+      ...(item.alias ? { alias: item.alias } : {}),
+      ...(item.mention_key ? { mention_key: item.mention_key } : {}),
+      ...(item.origin ? { origin: item.origin } : {}),
+    };
   }
 
   function markRegenByKeySucceeded(key: string) {
@@ -893,12 +966,13 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     markRegisterCharacterAssetSucceeded, markRegisterCharacterAssetFailed,
     activeDraftJobId, activeDraftShotId, draftJobIdFor, draftErrorFor,
     generateRenderDraft, fetchRenderDraft, renderDraftFor, updateRenderDraft,
+    fetchReferenceCandidates, referenceCandidatesFor, registerManualReference,
     videoDraftOptionsFor, setVideoDraftOptions,
     confirmRenderShot, fetchRenderVersions, renderVersionsFor,
     generateVideoFromDraft, fetchVideoVersions, videoVersionsFor,
     selectRenderVersion, selectVideoVersion, lockShot,
     markDraftSucceeded, markDraftFailed, markRenderSucceeded, markRenderFailed,
-    renderShots, activeRenderJobId, activeRenderShotId,
+    renderShots, activeRenderJobId, activeRenderShotId, applyRenderJobProgress,
     renderHistoryLoadingShotId, renderError,
     markRegenByKeySucceeded, markRegenByKeyFailed,
     selectShot, selectCharacter, selectScene, setStep

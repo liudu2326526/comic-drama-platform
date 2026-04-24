@@ -38,6 +38,9 @@ class StoryboardService:
             detail=data.get("detail"),
             duration_sec=data.get("duration_sec"),
             tags=data.get("tags"),
+            source_excerpt=data.get("source_excerpt"),
+            source_anchor=data.get("source_anchor"),
+            beats=data.get("beats"),
             status="pending"
         )
         self.session.add(shot)

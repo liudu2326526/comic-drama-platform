@@ -1,10 +1,9 @@
 <!-- frontend/src/views/WorkbenchView.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import AppTopbar from "@/components/layout/AppTopbar.vue";
-import SidebarProjects from "@/components/layout/SidebarProjects.vue";
 import WorkflowStepNav from "@/components/workflow/WorkflowStepNav.vue";
 import ProjectSetupPanel from "@/components/setup/ProjectSetupPanel.vue";
 import StoryboardPanel from "@/components/storyboard/StoryboardPanel.vue";
@@ -26,6 +25,7 @@ const toast = useToast();
 const rollbackOpen = ref(false);
 const subtitle = computed(() => current.value?.stage ?? "加载中");
 const STEP_KEYS: WorkflowStep[] = ["setup", "storyboard", "character", "scene", "render", "export"];
+let sectionObserver: IntersectionObserver | null = null;
 
 async function loadCurrent() {
   try {
@@ -49,12 +49,41 @@ async function changeStep(step: WorkflowStep) {
   document.getElementById(`panel-${step}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function observeWorkflowSections() {
+  sectionObserver?.disconnect();
+  if (!current.value || typeof IntersectionObserver === "undefined") return;
+
+  sectionObserver = new IntersectionObserver(
+    (entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      const step = visible?.target.id.replace("panel-", "") as WorkflowStep | undefined;
+      if (step && STEP_KEYS.includes(step) && step !== activeStep.value) {
+        store.setStep(step);
+      }
+    },
+    { root: null, rootMargin: "-18% 0px -62% 0px", threshold: [0.1, 0.35, 0.6] }
+  );
+
+  STEP_KEYS.forEach((step) => {
+    const el = document.getElementById(`panel-${step}`);
+    if (el) sectionObserver?.observe(el);
+  });
+}
+
 onMounted(async () => {
   await loadCurrent();
   const step = route.query.step;
   if (typeof step === "string" && STEP_KEYS.includes(step as WorkflowStep)) {
     await changeStep(step as WorkflowStep);
   }
+  await nextTick();
+  observeWorkflowSections();
+});
+
+onBeforeUnmount(() => {
+  sectionObserver?.disconnect();
 });
 
 watch(
@@ -63,6 +92,11 @@ watch(
     if (newId && newId !== oldId) loadCurrent();
   }
 );
+
+watch(current, async () => {
+  await nextTick();
+  observeWorkflowSections();
+});
 </script>
 
 <template>
@@ -73,9 +107,8 @@ watch(
     </AppTopbar>
 
     <main class="workspace-layout">
-      <SidebarProjects />
+      <WorkflowStepNav class="workflow-sidebar" :active="activeStep" @change="changeStep" />
       <section class="content-area">
-        <WorkflowStepNav :active="activeStep" @change="changeStep" />
         <div v-if="loading" class="skeleton">正在加载项目...</div>
         <template v-else-if="current">
           <div id="panel-setup"><ProjectSetupPanel /></div>

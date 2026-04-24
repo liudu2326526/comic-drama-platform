@@ -2,6 +2,8 @@ import { client } from "./client";
 import type {
   GenerateJobAck,
   RenderDraftRead,
+  ReferenceAssetCreate,
+  ReferenceCandidate,
   RenderSubmitRequest,
   RenderVersionRead,
   RenderVersionSelectResponse,
@@ -21,6 +23,20 @@ export const shotsApi = {
 
   async getRenderDraft(projectId: string, shotId: string): Promise<RenderDraftRead | null> {
     const r = await client.get(`/projects/${projectId}/shots/${shotId}/render-draft`);
+    return r.data;
+  },
+
+  async listReferenceCandidates(projectId: string, shotId: string): Promise<ReferenceCandidate[]> {
+    const r = await client.get(`/projects/${projectId}/shots/${shotId}/reference-candidates`);
+    return r.data;
+  },
+
+  async registerReferenceAsset(
+    projectId: string,
+    shotId: string,
+    payload: ReferenceAssetCreate
+  ): Promise<ReferenceCandidate> {
+    const r = await client.post(`/projects/${projectId}/shots/${shotId}/reference-assets`, payload);
     return r.data;
   },
 

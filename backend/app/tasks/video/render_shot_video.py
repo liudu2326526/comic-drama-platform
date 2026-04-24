@@ -21,6 +21,7 @@ from app.pipeline.transitions import (
     mark_shot_video_succeeded,
     update_job_progress,
 )
+from app.domain.services.reference_binding import append_reference_binding
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -140,7 +141,7 @@ async def _render_shot_video_task(shot_id: str, video_render_id: str, job_id: st
 
             provider_task = await client.video_generations_create(
                 model=params.get("model") or params.get("resolved_model") or settings.ark_video_model_fast,
-                prompt=snapshot.get("prompt", ""),
+                prompt=append_reference_binding(snapshot.get("prompt", ""), snapshot.get("reference_binding_text")),
                 references=references,
                 duration=int(params["duration"]) if params.get("duration") is not None else None,
                 resolution=str(params.get("resolution", settings.ark_video_default_resolution)),

@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from app.domain.schemas.reference import ReferenceMention
 
 
 class RenderVersionRead(BaseModel):
@@ -40,8 +42,12 @@ class RenderSubmitReference(BaseModel):
     source_id: str
     name: str
     image_url: str
+    alias: str | None = None
+    mention_key: str | None = None
+    origin: str | None = None
 
 
 class RenderSubmitRequest(BaseModel):
     prompt: str
     references: list[RenderSubmitReference]
+    reference_mentions: list[ReferenceMention] = Field(default_factory=list)

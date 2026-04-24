@@ -40,3 +40,19 @@ def get_obs_url(object_key: str) -> str:
         raise RuntimeError("OBS_PUBLIC_BASE_URL 未配置")
     base = s.obs_public_base_url.rstrip("/")
     return f"{base}/{object_key.lstrip('/')}"
+
+
+def object_exists_in_obs(object_key: str) -> bool:
+    s = get_settings()
+    if s.obs_mock:
+        if s.ai_provider_mode == "real":
+            raise RuntimeError("OBS_MOCK=1 不得在 AI_PROVIDER_MODE=real 下使用,必须配置真实 OBS")
+        return object_key.startswith("projects/")
+    if not all([s.obs_ak, s.obs_sk, s.obs_endpoint, s.obs_bucket]):
+        raise RuntimeError("OBS 配置不完整")
+    client = _get_obs_client()
+    try:
+        resp = client.getObjectMetadata(s.obs_bucket, object_key)
+        return resp.status < 300
+    finally:
+        client.close()

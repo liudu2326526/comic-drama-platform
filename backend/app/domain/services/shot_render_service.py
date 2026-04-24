@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.errors import ApiError
 from app.domain.models import Character, Project, Scene, ShotRender, StoryboardShot
 from app.domain.schemas.shot_render import RenderSubmitRequest
+from app.domain.services.reference_binding import build_reference_binding_text, normalize_reference_mentions
 from app.domain.services.reference_candidates import build_reference_candidates
 from app.infra.asset_store import build_asset_url
 from app.pipeline.states import ProjectStageRaw
@@ -92,6 +93,8 @@ class ShotRenderService:
                 select(func.max(ShotRender.version_no)).where(ShotRender.shot_id == shot_id)
             )
         ).scalar()
+        reference_mentions = normalize_reference_mentions(payload.reference_mentions)
+        reference_binding_text = build_reference_binding_text(reference_mentions)
         render = ShotRender(
             shot_id=shot.id,
             version_no=(max_version or 0) + 1,
@@ -99,6 +102,8 @@ class ShotRenderService:
             prompt_snapshot={
                 "prompt": payload.prompt,
                 "references": [item.model_dump() for item in payload.references],
+                "reference_mentions": reference_mentions,
+                "reference_binding_text": reference_binding_text,
                 "shot": {
                     "id": shot.id,
                     "idx": shot.idx,

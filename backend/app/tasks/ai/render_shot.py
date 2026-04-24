@@ -20,6 +20,7 @@ from app.pipeline.transitions import (
     mark_shot_render_succeeded,
     update_job_progress,
 )
+from app.domain.services.reference_binding import append_reference_binding
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -107,7 +108,7 @@ async def _render_shot_task(shot_id: str, render_id: str, job_id: str) -> None:
             # service 层已经把 object key 归一成公网 URL / asset:// 引用，这里不再传裸 key。
             response = await client.image_generations(
                 model=settings.ark_image_model,
-                prompt=snapshot["prompt"],
+                prompt=append_reference_binding(snapshot["prompt"], snapshot.get("reference_binding_text")),
                 references=[item["image_url"] for item in snapshot.get("references", [])],
                 n=1,
                 size=getattr(settings, "ark_shot_image_size", "1024x1792"),

@@ -213,6 +213,55 @@ describe("workbench M3b render actions", () => {
     });
   });
 
+  it("generateVideoFromDraft(): 同时识别 @图1 序号引用和 @角色名 引用", async () => {
+    vi.spyOn(projectsApi, "get").mockResolvedValue(mkProject() as never);
+    vi.spyOn(shotsApi, "generateVideo").mockResolvedValue({ job_id: "VJ2", sub_job_ids: [] } as never);
+
+    const store = useWorkbenchStore();
+    await store.load("P1");
+    store.updateRenderDraft("SH1", {
+      shot_id: "SH1",
+      prompt: "@图1 作为核心场景，@赵谨 在门外徘徊。",
+      references: [
+        {
+          id: "scene-1",
+          kind: "scene",
+          source_id: "SC1",
+          name: "朱雀门雨夜宫城场景",
+          image_url: "https://img/scene.png",
+          alias: "朱雀门雨夜宫城场景",
+          mention_key: "scene:SC1",
+          origin: "auto",
+          reason: "场景参考",
+        },
+        {
+          id: "character-1",
+          kind: "character",
+          source_id: "C1",
+          name: "赵谨",
+          image_url: "https://img/character.png",
+          alias: "赵谨",
+          mention_key: "character:C1",
+          origin: "auto",
+          reason: "人物参考",
+        },
+      ],
+    });
+
+    await store.generateVideoFromDraft("SH1");
+
+    expect(shotsApi.generateVideo).toHaveBeenCalledWith(
+      "P1",
+      "SH1",
+      expect.objectContaining({
+        reference_mentions: [
+          { mention_key: "scene:SC1", label: "图1" },
+          { mention_key: "character:C1", label: "赵谨" },
+        ],
+      })
+    );
+  });
+
   it("fetchVideoVersions(): 缓存版本历史", async () => {
     vi.spyOn(projectsApi, "get").mockResolvedValue(mkProject() as never);
     vi.spyOn(shotsApi, "listVideos").mockResolvedValue([

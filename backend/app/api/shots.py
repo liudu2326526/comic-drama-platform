@@ -6,9 +6,15 @@ from app.api.errors import ApiError
 from app.config import get_settings
 from app.deps import get_db
 from app.domain.models import ShotRender
-from app.domain.schemas import GenerateJobAck, ShotDraftRead, ShotVideoSubmitRequest, ShotVideoVersionRead
+from app.domain.schemas import (
+    GenerateJobAck,
+    ReferenceAssetCreate,
+    ShotDraftRead,
+    ShotVideoSubmitRequest,
+    ShotVideoVersionRead,
+)
 from app.domain.schemas.shot_render import RenderSubmitRequest, RenderVersionRead
-from app.domain.services import JobService, ShotDraftService, ShotRenderService, ShotVideoService
+from app.domain.services import JobService, ShotDraftService, ShotReferenceService, ShotRenderService, ShotVideoService
 from app.infra.asset_store import build_asset_url
 from app.pipeline.transitions import InvalidTransition, mark_shot_render_failed, update_job_progress
 from app.tasks.ai.gen_shot_draft import _gen_shot_draft_task, gen_shot_draft
@@ -16,6 +22,29 @@ from app.tasks.ai.render_shot import _render_shot_task, render_shot_task
 from app.tasks.video.render_shot_video import _render_shot_video_task, render_shot_video_task
 
 router = APIRouter(prefix="/projects/{project_id}/shots", tags=["shots"])
+
+
+@router.get("/{shot_id}/reference-candidates")
+async def list_reference_candidates(project_id: str, shot_id: str, db: AsyncSession = Depends(get_db)):
+    svc = ShotReferenceService(db)
+    items = await svc.list_candidates(project_id, shot_id)
+    return ok([item.model_dump(mode="json") for item in items])
+
+
+@router.post("/{shot_id}/reference-assets")
+async def create_reference_asset(
+    project_id: str,
+    shot_id: str,
+    payload: ReferenceAssetCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await ShotReferenceService(db)._get_shot(project_id, shot_id)
+        item = await ShotReferenceService(db).create_manual_asset(project_id, payload)
+        await db.commit()
+        return ok(item.model_dump(mode="json"))
+    except InvalidTransition as exc:
+        raise ApiError(40301, str(exc), http_status=403)
 
 
 @router.post("/{shot_id}/render-draft")
@@ -130,6 +159,7 @@ async def generate_video(
             shot_id,
             prompt=payload.prompt,
             references=payload.references,
+            reference_mentions=payload.reference_mentions,
             duration=payload.duration,
             resolution=payload.resolution,
             model_type=payload.model_type,

@@ -48,6 +48,9 @@ async def list_storyboards(project_id: str, db: AsyncSession = Depends(get_db)):
             "description": i.description,
             "detail": i.detail,
             "tags": i.tags,
+            "source_excerpt": i.source_excerpt,
+            "source_anchor": i.source_anchor,
+            "beats": i.beats,
             "status": i.status,
             "duration_sec": float(i.duration_sec) if i.duration_sec is not None else None,
             "scene_id": i.scene_id

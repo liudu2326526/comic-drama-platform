@@ -123,6 +123,11 @@ export interface JobState {
   kind: string;
   status: JobStatus;
   progress: number;
+  display_progress?: number;
+  elapsed_seconds?: number;
+  estimated_total_seconds?: number | null;
+  estimated_remaining_seconds?: number | null;
+  estimated_source?: string | null;
   total: number | null;
   done: number;
   payload: unknown | null;
@@ -139,8 +144,36 @@ export interface RenderDraftReference {
   kind: string;
   source_id: string;
   name: string;
+  alias?: string;
+  mention_key?: string;
   image_url: string;
+  origin?: ReferenceOrigin;
   reason: string;
+}
+
+export type ReferenceOrigin = "auto" | "manual" | "history";
+
+export interface ReferenceCandidate {
+  id: string;
+  kind: string;
+  source_id: string;
+  name: string;
+  alias: string;
+  mention_key: string;
+  image_url: string;
+  origin: ReferenceOrigin;
+  reason: string | null;
+}
+
+export interface ReferenceAssetCreate {
+  name: string;
+  image_url: string;
+  kind?: "manual";
+}
+
+export interface ReferenceMention {
+  mention_key: string;
+  label: string;
 }
 
 export interface RenderDraftRead {
@@ -159,11 +192,15 @@ export interface RenderSubmitReference {
   source_id: string;
   name: string;
   image_url: string;
+  alias?: string | null;
+  mention_key?: string | null;
+  origin?: string | null;
 }
 
 export interface RenderSubmitRequest {
   prompt: string;
   references: RenderSubmitReference[];
+  reference_mentions?: ReferenceMention[];
 }
 
 export const SHOT_VIDEO_DURATION_PRESETS = [4, 5, 8, 10] as const;
@@ -174,6 +211,7 @@ export type ShotVideoModelType = "standard" | "fast";
 export interface ShotVideoSubmitRequest {
   prompt: string;
   references: RenderSubmitReference[];
+  reference_mentions?: ReferenceMention[];
   duration?: number;
   resolution: ShotVideoResolution;
   model_type: ShotVideoModelType;
@@ -238,6 +276,9 @@ export interface StoryboardDetail {
   detail: string | null;
   duration_sec: number | null;
   tags: string[] | null;
+  source_excerpt?: string | null;
+  source_anchor?: Record<string, unknown> | null;
+  beats?: Array<Record<string, unknown>> | null;
   status: string; // pending|generating|succeeded|failed|locked
   scene_id: string | null;
   current_render_id: string | null;
@@ -256,6 +297,9 @@ export interface StoryboardCreateRequest {
   detail?: string | null;
   duration_sec?: number | null; // 0 ≤ x ≤ 300
   tags?: string[] | null;
+  source_excerpt?: string | null;
+  source_anchor?: Record<string, unknown> | null;
+  beats?: Array<Record<string, unknown>> | null;
   idx?: number | null; // 1..999;null/缺省 = 追加到尾
 }
 
@@ -265,6 +309,9 @@ export interface StoryboardUpdateRequest {
   detail?: string | null; // 显式 null 允许(清空)
   duration_sec?: number;
   tags?: string[];
+  source_excerpt?: string;
+  source_anchor?: Record<string, unknown>;
+  beats?: Array<Record<string, unknown>>;
 }
 
 export interface StoryboardReorderRequest {

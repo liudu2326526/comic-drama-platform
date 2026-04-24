@@ -3,6 +3,8 @@ import { computed, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import PanelSection from "@/components/common/PanelSection.vue";
 import ProgressBar from "@/components/common/ProgressBar.vue";
+import ReferenceMentionMenu from "@/components/generation/ReferenceMentionMenu.vue";
+import ReferencePickerModal from "@/components/generation/ReferencePickerModal.vue";
 import RenderVersionHistory from "@/components/generation/RenderVersionHistory.vue";
 import { useWorkbenchStore } from "@/store/workbench";
 import { useStageGate } from "@/composables/useStageGate";
@@ -11,6 +13,8 @@ import { useToast } from "@/composables/useToast";
 import { ApiError, messageFor } from "@/utils/error";
 import type {
   RenderSubmitReference,
+  ReferenceAssetCreate,
+  ReferenceCandidate,
   ShotVideoDurationPreset,
   ShotVideoModelType,
   ShotVideoResolution,
@@ -32,10 +36,17 @@ const { flags } = useStageGate();
 const toast = useToast();
 
 const historyOpen = ref(false);
+const pickerOpen = ref(false);
+const mentionOpen = ref(false);
 const submitting = ref(false);
 const loadingDraft = ref(false);
 const draftPrompt = ref("");
 const draftReferences = ref<RenderSubmitReference[]>([]);
+const protectedMentionBase = ref("");
+const lastStablePrompt = ref("");
+const promptEl = ref<HTMLTextAreaElement | null>(null);
+const MAX_REFERENCES = 6;
+const MENTION_TRIGGER_RE = /@[^@\s，。！？、；：,.!?;:（）()【】《》“”"']{0,30}$/;
 
 const selectedRenderShot = computed(
   () => renderShots.value.find((item) => item.shotId === selectedShotId.value) ?? renderShots.value[0] ?? null
@@ -72,10 +83,22 @@ const renderProgress = computed(() => {
   if (activeRenderShotId.value !== selectedRenderShot.value?.shotId) return 0;
   return selectedRenderShot.value?.progress ?? 0;
 });
+const renderProgressLabel = computed(() => {
+  if (!selectedRenderShot.value) return "";
+  const remain = selectedRenderShot.value.estimatedRemainingSeconds;
+  const source = selectedRenderShot.value.estimatedSource;
+  const base = remain === null || remain === undefined ? "" : `预计剩余约 ${remain} 秒`;
+  if (!source?.startsWith("recent_")) return base;
+  const count = source.replace("recent_", "");
+  return `${base} · 基于最近 ${count} 条同类任务`;
+});
+const selectedCandidates = computed(() =>
+  selectedRenderShot.value ? store.referenceCandidatesFor(selectedRenderShot.value.shotId) : []
+);
 const generateVideoDisabled = computed(() => {
-  if (!selectedRenderShot.value || !selectedDraft.value || !flags.value.canRender) return true;
+  if (!selectedRenderShot.value || !flags.value.canRender) return true;
   const isActiveShot = !!activeRenderJobId.value && activeRenderShotId.value === selectedRenderShot.value.shotId;
-  return isActiveShot || !selectedDraft.value.prompt.trim() || selectedDraft.value.references.length === 0;
+  return isActiveShot || !draftPrompt.value.trim() || draftReferences.value.length === 0;
 });
 const generateVideoButtonText = computed(() => {
   if (submitting.value || (activeRenderJobId.value && activeRenderShotId.value === selectedRenderShot.value?.shotId)) {
@@ -102,7 +125,7 @@ const renderBlockedMessage = computed(() => {
 
 function toVideoParamSummary(snapshot: Record<string, unknown>) {
   return {
-    duration: snapshot.duration == null ? null : Number(snapshot.duration),
+    duration: snapshot.duration === null || snapshot.duration === undefined ? null : Number(snapshot.duration),
     resolution: String(snapshot.resolution ?? "480p") as ShotVideoResolution,
     modelType: String(snapshot.model_type ?? "fast") as ShotVideoModelType,
   };
@@ -112,17 +135,22 @@ function syncDraftFromStore() {
   const shotId = selectedRenderShot.value?.shotId;
   if (!shotId) {
     draftPrompt.value = "";
+    lastStablePrompt.value = "";
     draftReferences.value = [];
     return;
   }
   const draft = store.renderDraftFor(shotId);
   draftPrompt.value = draft?.prompt ?? "";
+  lastStablePrompt.value = draftPrompt.value;
   draftReferences.value = (draft?.references ?? []).map((item) => ({
     id: item.id,
     kind: item.kind,
     source_id: item.source_id,
     name: item.name,
     image_url: item.image_url,
+    alias: item.alias ?? item.name,
+    mention_key: item.mention_key ?? item.id,
+    origin: item.origin ?? item.kind,
   }));
 }
 
@@ -135,13 +163,24 @@ watch(
       try {
         const draft = await store.fetchRenderDraft(shotId);
         draftPrompt.value = draft.prompt;
+        lastStablePrompt.value = draft.prompt;
         draftReferences.value = draft.references.map((item) => ({
           id: item.id,
           kind: item.kind,
           source_id: item.source_id,
           name: item.name,
           image_url: item.image_url,
+          alias: item.alias ?? item.name,
+          mention_key: item.mention_key ?? item.id,
+          origin: item.origin ?? item.kind,
         }));
+      } catch {
+        // noop
+      }
+    }
+    if (!store.referenceCandidatesFor(shotId).length) {
+      try {
+        await store.fetchReferenceCandidates(shotId);
       } catch {
         // noop
       }
@@ -158,7 +197,7 @@ watch(
 );
 
 useJobPolling(activeDraftJobId, {
-  onProgress: () => void 0,
+  onProgress: (job) => store.applyRenderJobProgress(job),
   onSuccess: async () => {
     const shotId = activeDraftShotId.value;
     if (!shotId) {
@@ -167,12 +206,16 @@ useJobPolling(activeDraftJobId, {
     try {
       const draft = await store.fetchRenderDraft(shotId);
       draftPrompt.value = draft.prompt;
+      lastStablePrompt.value = draft.prompt;
       draftReferences.value = draft.references.map((item) => ({
         id: item.id,
         kind: item.kind,
         source_id: item.source_id,
         name: item.name,
         image_url: item.image_url,
+        alias: item.alias ?? item.name,
+        mention_key: item.mention_key ?? item.id,
+        origin: item.origin ?? item.kind,
       }));
       store.markDraftSucceeded(shotId);
       toast.success("草稿生成完成");
@@ -218,20 +261,171 @@ function selectShot(shotId: string) {
   store.selectShot(shotId);
 }
 
-function onPromptInput(value: string) {
+function onPromptInput(value: string, cursor = value.length) {
   if (!selectedRenderShot.value) return;
-  draftPrompt.value = value;
-  store.updateRenderDraft(selectedRenderShot.value.shotId, { prompt: value });
+  const replacedByAt = value === "@" && draftPrompt.value.length > 1;
+  if (replacedByAt) protectedMentionBase.value = draftPrompt.value;
+  const next = replacedByAt ? `${draftPrompt.value}@` : value;
+  const nextCursor = replacedByAt ? next.length : cursor;
+  if (!isMentionTriggerActive(next, nextCursor)) protectedMentionBase.value = "";
+  draftPrompt.value = next;
+  if (next.length > 1) lastStablePrompt.value = isMentionTriggerActive(next, nextCursor) ? next.slice(0, nextCursor - 1) : next;
+  mentionOpen.value = isMentionTriggerActive(next, nextCursor);
+  store.updateRenderDraft(selectedRenderShot.value.shotId, { prompt: next });
+}
+
+function onPromptFocus(event: FocusEvent) {
+  const textarea = event.target as HTMLTextAreaElement;
+  mentionOpen.value = isMentionTriggerActive(draftPrompt.value, textarea.selectionStart ?? draftPrompt.value.length);
+}
+
+function onPromptKeydown(event: KeyboardEvent) {
+  if (event.key !== "@" || !selectedRenderShot.value) return;
+  const textarea = event.target as HTMLTextAreaElement;
+  const start = textarea.selectionStart ?? 0;
+  const end = textarea.selectionEnd ?? start;
+  if (start !== 0 || end !== draftPrompt.value.length || draftPrompt.value.length === 0) return;
+
+  event.preventDefault();
+  protectedMentionBase.value = draftPrompt.value;
+  const next = `${draftPrompt.value}@`;
+  onPromptInput(next);
+  mentionOpen.value = true;
+  requestAnimationFrame(() => {
+    textarea.focus();
+    textarea.setSelectionRange(next.length, next.length);
+  });
 }
 
 function removeReference(id: string) {
   if (!selectedRenderShot.value) return;
+  const item = draftReferences.value.find((ref) => ref.id === id);
+  const label = item?.alias ?? item?.name ?? "";
+  if (label && draftPrompt.value.includes(`@${label}`) && !window.confirm("该参考图已在提示词中被 @ 引用，确认删除？")) {
+    return;
+  }
   draftReferences.value = draftReferences.value.filter((item) => item.id !== id);
   store.updateRenderDraft(selectedRenderShot.value.shotId, { references: draftReferences.value as never });
 }
 
+function addReference(item: ReferenceCandidate) {
+  if (!selectedRenderShot.value || draftReferences.value.length >= MAX_REFERENCES) return;
+  if (draftReferences.value.some((ref) => ref.id === item.id)) return;
+  draftReferences.value = disambiguateAliases([...draftReferences.value, candidateToReference(item)]);
+  store.updateRenderDraft(selectedRenderShot.value.shotId, { references: draftReferences.value as never });
+  pickerOpen.value = false;
+}
+
+async function registerManualReference(payload: ReferenceAssetCreate) {
+  if (!selectedRenderShot.value) return;
+  try {
+    const item = await store.registerManualReference(selectedRenderShot.value.shotId, payload);
+    addReference(item);
+    pickerOpen.value = false;
+    toast.success("已加入参考图");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "加入参考图失败");
+  }
+}
+
+function candidateToReference(item: ReferenceCandidate): RenderSubmitReference {
+  return {
+    id: item.id,
+    kind: item.kind,
+    source_id: item.source_id,
+    name: item.name,
+    image_url: item.image_url,
+    alias: item.alias,
+    mention_key: item.mention_key,
+    origin: item.origin,
+  };
+}
+
+function disambiguateAliases(items: RenderSubmitReference[]): RenderSubmitReference[] {
+  const counts = new Map<string, number>();
+  return items.map((item) => {
+    const base = item.alias ?? item.name;
+    const next = (counts.get(base) ?? 0) + 1;
+    counts.set(base, next);
+    return { ...item, alias: next === 1 ? base : `${base}-${item.kind}` };
+  });
+}
+
+function insertMention(item: RenderSubmitReference) {
+  const label = item.alias ?? item.name;
+  const textarea = promptEl.value;
+  const mention = `@${label} `;
+  if (!textarea) {
+    onPromptInput(`${draftPrompt.value}${mention}`);
+    return;
+  }
+  const start = textarea.selectionStart ?? draftPrompt.value.length;
+  const end = textarea.selectionEnd ?? start;
+  const recoveredBase = protectedMentionBase.value || (draftPrompt.value === "@" ? lastStablePrompt.value : "");
+  const hasRecoveredBase = recoveredBase && draftPrompt.value.endsWith("@");
+  const value = hasRecoveredBase ? `${recoveredBase}@` : draftPrompt.value;
+  const { next, position } = buildMentionInsertedPrompt(
+    value,
+    hasRecoveredBase ? value.length : start,
+    hasRecoveredBase ? value.length : end,
+    mention
+  );
+  onPromptInput(next, position);
+  protectedMentionBase.value = "";
+  mentionOpen.value = false;
+  requestAnimationFrame(() => {
+    textarea.focus();
+    textarea.setSelectionRange(position, position);
+  });
+}
+
+function buildMentionInsertedPrompt(value: string, selectionStart: number, selectionEnd: number, mention: string) {
+  let start = selectionStart;
+  let end = selectionEnd;
+  if (
+    start === 0 &&
+    (
+      end === value.length ||
+      (value.endsWith("@") && (end === value.length - 1 || value.length > 1))
+    ) &&
+    value.length > 0
+  ) {
+    start = value.length;
+    end = value.length;
+  }
+  const prefix = value.slice(0, start);
+  const activeMention = prefix.match(MENTION_TRIGGER_RE)?.[0] ?? "";
+  const insertStart = activeMention ? start - activeMention.length : start;
+  const next = `${value.slice(0, insertStart)}${mention}${value.slice(end)}`;
+  return { next, position: insertStart + mention.length };
+}
+
+function isMentionTriggerActive(value: string, cursor = value.length) {
+  return MENTION_TRIGGER_RE.test(value.slice(0, cursor));
+}
+
+function moveReference(id: string, direction: -1 | 1) {
+  if (!selectedRenderShot.value) return;
+  const index = draftReferences.value.findIndex((item) => item.id === id);
+  const nextIndex = index + direction;
+  if (index < 0 || nextIndex < 0 || nextIndex >= draftReferences.value.length) return;
+  const next = [...draftReferences.value];
+  [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+  draftReferences.value = next;
+  store.updateRenderDraft(selectedRenderShot.value.shotId, { references: draftReferences.value as never });
+}
+
+function persistCurrentDraft() {
+  if (!selectedRenderShot.value) return;
+  store.updateRenderDraft(selectedRenderShot.value.shotId, {
+    prompt: draftPrompt.value,
+    references: draftReferences.value as never,
+  });
+}
+
 async function generateDraft() {
   if (!selectedRenderShot.value || !flags.value.canRender) return;
+  persistCurrentDraft();
   loadingDraft.value = true;
   try {
     await store.generateRenderDraft(selectedRenderShot.value.shotId);
@@ -247,10 +441,7 @@ async function generateVideo() {
   if (!selectedRenderShot.value || generateVideoDisabled.value) return;
   submitting.value = true;
   try {
-    store.updateRenderDraft(selectedRenderShot.value.shotId, {
-      prompt: draftPrompt.value,
-      references: draftReferences.value as never,
-    });
+    persistCurrentDraft();
     await store.generateVideoFromDraft(selectedRenderShot.value.shotId);
     toast.info("已提交视频生成任务");
   } catch (e) {
@@ -415,34 +606,64 @@ async function handleLockShot() {
               <span>{{ renderProgress }}%</span>
             </div>
             <ProgressBar :value="renderProgress" />
+            <small v-if="renderProgressLabel">{{ renderProgressLabel }}</small>
+          </div>
+
+          <div class="reference-head">
+            <strong>参考图</strong>
+            <span>{{ draftReferences.length }}/{{ MAX_REFERENCES }} 张</span>
+          </div>
+          <div v-if="draftReferences.length" class="reference-rail">
+            <article v-for="item in draftReferences" :key="item.id" class="reference-chip">
+              <button class="thumb-btn" type="button" @click="insertMention(item)">
+                <img :src="item.image_url" :alt="item.alias ?? item.name" />
+              </button>
+              <strong>{{ item.alias ?? item.name }}</strong>
+              <small>{{ item.kind }}</small>
+              <div class="reference-tools">
+                <button class="ghost-btn tiny" type="button" @click="moveReference(item.id, -1)">↑</button>
+                <button class="ghost-btn tiny" type="button" @click="moveReference(item.id, 1)">↓</button>
+                <button class="ghost-btn tiny" type="button" @click="removeReference(item.id)">删除</button>
+              </div>
+            </article>
+            <button
+              class="add-reference"
+              type="button"
+              :disabled="draftReferences.length >= MAX_REFERENCES"
+              @click="pickerOpen = true"
+            >
+              添加
+            </button>
+          </div>
+          <div v-else class="empty-inline">
+            至少保留 1 张参考图后才能生成视频。
+            <button class="ghost-btn small" type="button" @click="pickerOpen = true">添加参考图</button>
           </div>
 
           <label class="field-label" for="draft-prompt">镜头提示词</label>
           <textarea
             id="draft-prompt"
+            ref="promptEl"
             data-testid="draft-prompt"
             :value="draftPrompt"
             class="prompt-input"
             rows="8"
             placeholder="先生成草稿，再按需要调整镜头提示词"
-            @input="onPromptInput(($event.target as HTMLTextAreaElement).value)"
+            @keydown="onPromptKeydown"
+            @input="
+              onPromptInput(
+                ($event.target as HTMLTextAreaElement).value,
+                ($event.target as HTMLTextAreaElement).selectionStart ?? undefined
+              )
+            "
+            @focus="onPromptFocus"
+            @blur="mentionOpen = false"
           />
-
-          <div class="reference-head">
-            <strong>参考图</strong>
-            <span>{{ draftReferences.length }} 张</span>
-          </div>
-          <div v-if="draftReferences.length" class="reference-grid">
-            <article v-for="item in draftReferences" :key="item.id" class="reference-card">
-              <img :src="item.image_url" :alt="item.name" />
-              <div class="reference-copy">
-                <strong>{{ item.name }}</strong>
-                <small>{{ item.kind }}</small>
-              </div>
-              <button class="ghost-btn small" type="button" @click="removeReference(item.id)">删除</button>
-            </article>
-          </div>
-          <div v-else class="empty-inline">至少保留 1 张参考图后才能生成视频。</div>
+          <ReferenceMentionMenu
+            :open="mentionOpen"
+            :items="draftReferences"
+            @select="insertMention"
+          />
         </div>
 
         <div class="preview-panel">
@@ -504,6 +725,15 @@ async function handleLockShot() {
       :loading="renderHistoryLoadingShotId === selectedRenderShot?.shotId"
       @close="historyOpen = false"
       @select="handleSelectVersion"
+    />
+    <ReferencePickerModal
+      :open="pickerOpen"
+      :candidates="selectedCandidates"
+      :selected="draftReferences"
+      :max-count="MAX_REFERENCES"
+      @close="pickerOpen = false"
+      @add="addReference"
+      @register="registerManualReference"
     />
   </PanelSection>
 </template>
@@ -628,37 +858,63 @@ async function handleLockShot() {
   border: 1px solid var(--panel-border);
   background: rgba(255, 255, 255, 0.02);
   color: var(--text-primary);
-  resize: vertical;
 }
-.reference-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+.reference-rail {
+  display: flex;
   gap: 12px;
   margin-top: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
 }
-.reference-card {
-  overflow: hidden;
+.reference-chip {
+  flex: 0 0 116px;
+  min-width: 116px;
+  padding: 8px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--panel-border);
   background: rgba(255, 255, 255, 0.02);
 }
-.reference-card img {
+.thumb-btn {
   display: block;
   width: 100%;
-  height: 132px;
-  object-fit: cover;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
-.reference-copy {
-  padding: 12px 12px 0;
-}
-.reference-copy strong {
+.reference-chip img {
   display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 6px;
 }
-.reference-copy small {
+.reference-chip strong,
+.reference-chip small {
+  display: block;
+  overflow: hidden;
+  margin-top: 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reference-chip small {
   color: var(--text-faint);
 }
-.reference-card .ghost-btn {
-  margin: 12px;
+.reference-tools {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+.ghost-btn.tiny {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+.add-reference {
+  flex: 0 0 82px;
+  min-height: 116px;
+  border: 1px dashed var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
 }
 .preview-panel {
   display: flex;
@@ -710,6 +966,11 @@ async function handleLockShot() {
   padding: 12px;
   border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.02);
+}
+.render-progress small {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-faint);
 }
 .param-summary {
   display: grid;

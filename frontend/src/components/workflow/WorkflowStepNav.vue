@@ -13,7 +13,8 @@ defineProps<{ active: WorkflowStep }>();
 defineEmits<{ (e: "change", step: WorkflowStep): void }>();
 </script>
 <template>
-  <nav class="workflow-nav">
+  <nav class="workflow-nav" aria-label="工作流阶段">
+    <span class="workflow-nav-title">流程</span>
     <button
       v-for="s in steps"
       :key="s.key"

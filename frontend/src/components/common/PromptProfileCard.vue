@@ -241,7 +241,6 @@ function saveDraft() {
   color: var(--text-main);
   font: inherit;
   line-height: 1.6;
-  resize: vertical;
 }
 
 .action-row {

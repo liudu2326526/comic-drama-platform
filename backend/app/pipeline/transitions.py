@@ -375,6 +375,15 @@ def advance_to_rendering(project: Project) -> None:
     project.stage = ProjectStageRaw.RENDERING.value
 
 
+def return_to_rendering(project: Project) -> None:
+    current = ProjectStageRaw(project.stage)
+    if current == ProjectStageRaw.RENDERING:
+        return
+    if current != ProjectStageRaw.READY_FOR_EXPORT:
+        raise InvalidTransition(current.value, ProjectStageRaw.RENDERING.value, "只有 ready_for_export 可回到 rendering")
+    project.stage = ProjectStageRaw.RENDERING.value
+
+
 async def advance_to_ready_for_export_if_complete(session: AsyncSession, project: Project) -> bool:
     from app.domain.models import StoryboardShot
 

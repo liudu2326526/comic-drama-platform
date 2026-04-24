@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 
 from app.config import get_settings
@@ -10,6 +11,34 @@ from app.tasks.celery_app import celery_app
 from app.utils.json_utils import extract_json
 
 logger = logging.getLogger(__name__)
+
+
+def build_character_prompt_profile_messages(project: Project) -> list[dict[str, str]]:
+    system_prompt = (
+        "你是漫剧项目的视觉设定师。"
+        "请只返回 JSON 对象，字段固定为 prompt。"
+        "prompt 必须是一段中文自然语言，显式覆盖以下 7 个维度："
+        "world_era、visual_style、palette_lighting、lens_language、"
+        "character_rules、scene_rules、negative_rules。"
+        "不要返回 markdown，不要返回解释，不要省略字段语义。"
+    )
+    project_context = {
+        "name": project.name,
+        "genre": project.genre,
+        "ratio": project.ratio,
+        "story": project.story,
+        "summary": project.summary,
+        "overview": project.overview,
+        "setup_params": project.setup_params or [],
+    }
+    user_prompt = (
+        "请基于以下项目上下文，生成一段适合所有角色参考图复用的统一视觉设定。\n"
+        f"{json.dumps(project_context, ensure_ascii=False, indent=2)}"
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
 
 
 async def _run(project_id: str, job_id: str) -> None:
@@ -26,24 +55,9 @@ async def _run(project_id: str, job_id: str) -> None:
                 await session.commit()
                 return
 
-            system_prompt = (
-                "你是漫剧项目的视觉设定师。"
-                "请只返回 JSON 对象，字段固定为 prompt。"
-                "prompt 必须是一段中文自然语言，显式覆盖以下 7 个维度："
-                "world_era、visual_style、palette_lighting、lens_language、"
-                "character_rules、scene_rules、negative_rules。"
-                "不要返回 markdown，不要返回解释，不要省略字段语义。"
-            )
-            user_prompt = (
-                "请基于项目故事概述、setup_params、项目摘要和整体风格，"
-                "生成一段适合所有角色参考图复用的统一视觉设定。"
-            )
             response = await get_volcano_client().chat_completions(
                 model=settings.ark_chat_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+                messages=build_character_prompt_profile_messages(project),
             )
             content = response.choices[0].message.content
             payload = {"prompt": extract_json(content)["prompt"].strip(), "source": "ai"}

@@ -17,12 +17,42 @@ body {
   background-attachment: fixed;
 }
 
+* {
+  scrollbar-color: rgba(138, 140, 255, 0.46) rgba(255, 255, 255, 0.04);
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(138, 140, 255, 0.72), rgba(92, 214, 169, 0.42));
+  border: 2px solid rgba(14, 16, 32, 0.92);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(158, 160, 255, 0.9), rgba(92, 214, 169, 0.6));
+}
+
 body,
 button,
 input,
 select,
 textarea {
   font: inherit;
+}
+
+textarea {
+  resize: none;
 }
 
 button {
@@ -111,27 +141,47 @@ button {
 
 .workspace-layout {
   display: grid;
-  grid-template-columns: 290px minmax(0, 1fr);
+  grid-template-columns: 180px minmax(0, 1fr);
   gap: 20px;
   align-items: start;
 }
 
 .workflow-nav {
   display: flex;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-lg);
+  background: var(--panel-bg);
+  backdrop-filter: blur(16px);
+}
+
+.workflow-sidebar {
+  position: sticky;
+  top: 24px;
+  max-height: calc(100vh - 48px);
   overflow: auto;
-  padding-bottom: 2px;
-  margin-bottom: 12px;
+}
+
+.workflow-nav-title {
+  padding: 0 8px 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .workflow-chip {
   white-space: nowrap;
-  padding: 10px 18px;
-  border-radius: 999px;
-  background: var(--panel-bg);
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--panel-border);
   color: var(--text-muted);
   font-size: 14px;
+  text-align: left;
   transition: all 160ms;
 }
 
@@ -148,6 +198,24 @@ button {
 @media (max-width: 1180px) {
   .workspace-layout {
     grid-template-columns: 1fr;
+  }
+  .workflow-sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    max-height: none;
+  }
+  .workflow-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    border-radius: var(--radius-md);
+  }
+  .workflow-nav-title {
+    display: none;
+  }
+  .workflow-chip {
+    width: auto;
+    text-align: center;
   }
 }
 

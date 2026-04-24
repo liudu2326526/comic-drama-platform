@@ -7,6 +7,8 @@ from app.api.errors import ApiError
 from app.config import Settings, get_settings
 from app.domain.models import Project, ShotVideoRender, StoryboardShot
 from app.domain.schemas.shot_render import RenderSubmitReference
+from app.domain.schemas.reference import ReferenceMention
+from app.domain.services.reference_binding import build_reference_binding_text, normalize_reference_mentions
 from app.pipeline.states import ProjectStageRaw
 from app.pipeline.transitions import (
     InvalidTransition,
@@ -14,6 +16,7 @@ from app.pipeline.transitions import (
     advance_to_rendering,
     mark_shot_generating,
     mark_shot_locked,
+    return_to_rendering,
     select_shot_video_version,
 )
 
@@ -69,6 +72,7 @@ class ShotVideoService:
         duration: int | None,
         resolution: str,
         model_type: str,
+        reference_mentions: list[ReferenceMention] | None = None,
     ) -> ShotVideoRender:
         project = await self._get_project(project_id)
         if project.stage not in VIDEO_RENDERABLE_STAGES:
@@ -102,6 +106,8 @@ class ShotVideoService:
             item.model_dump() if hasattr(item, "model_dump") else dict(item)
             for item in references
         ]
+        mentions = normalize_reference_mentions(reference_mentions)
+        reference_binding_text = build_reference_binding_text(mentions)
         params_snapshot = {
             "resolution": resolution,
             "model_type": model_type,
@@ -130,12 +136,14 @@ class ShotVideoService:
                 },
                 "prompt": prompt,
                 "references": refs,
+                "reference_mentions": mentions,
+                "reference_binding_text": reference_binding_text,
             },
             params_snapshot=params_snapshot,
         )
         self.session.add(video)
         if project.stage == ProjectStageRaw.READY_FOR_EXPORT.value:
-            project.stage = ProjectStageRaw.RENDERING.value
+            return_to_rendering(project)
         else:
             advance_to_rendering(project)
         mark_shot_generating(shot)

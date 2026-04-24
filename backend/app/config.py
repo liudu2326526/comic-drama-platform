@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     video_worker_concurrency: int = 2
     ai_rate_limit_per_min: int = 120
 
+    job_progress_history_size: int = 20
+    job_progress_estimate_cap: int = 95
+    job_progress_estimate_min_seconds: int = 10
+    job_progress_default_seconds: int = 120
+
     def _mysql_url(self, db: str) -> str:
         pwd = quote_plus(self.mysql_password)
         return f"mysql+asyncmy://{self.mysql_user}:{pwd}@{self.mysql_host}:{self.mysql_port}/{db}"

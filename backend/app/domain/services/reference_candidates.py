@@ -32,7 +32,10 @@ def build_reference_candidates(
                 "kind": "scene",
                 "source_id": scene.id,
                 "name": scene.name,
+                "alias": scene.name,
+                "mention_key": f"scene:{scene.id}",
                 "image_url": asset_ref(scene.reference_image_url),
+                "origin": "auto",
                 "reason": _scene_reason(shot, shot_text, shot_terms, scene),
             }
             for scene in ordered_scenes
@@ -43,7 +46,10 @@ def build_reference_candidates(
                 "kind": "character",
                 "source_id": character.id,
                 "name": character.name,
+                "alias": character.name,
+                "mention_key": f"character:{character.id}",
                 "image_url": asset_ref(character.reference_image_url),
+                "origin": "auto",
                 "reason": _character_reason(shot_text, shot_terms, character),
             }
             for character in ordered_characters

@@ -19,12 +19,14 @@ vi.mock("@/api/characters", () => ({
 const generatePollingJob = ref<any>(null);
 const noopPollingJob = ref<any>(null);
 let generatePollingHandlers: any = null;
-let pollingCallCount = 0;
 
 vi.mock("@/composables/useJobPolling", () => ({
-  useJobPolling: (_jobId: unknown, handlers: unknown) => {
-    pollingCallCount += 1;
-    if (pollingCallCount === 1) {
+  useJobPolling: (jobId: unknown, handlers: unknown) => {
+    const currentJobId =
+      typeof jobId === "object" && jobId !== null && "value" in jobId
+        ? (jobId as { value: unknown }).value
+        : jobId;
+    if (currentJobId) {
       generatePollingHandlers = handlers;
       return { job: generatePollingJob, cancel: vi.fn() };
     }
@@ -108,7 +110,6 @@ describe("character generation chain", () => {
     generatePollingJob.value = null;
     noopPollingJob.value = null;
     generatePollingHandlers = null;
-    pollingCallCount = 0;
   });
 
   it("prefers extract_characters over gen_character_asset when both jobs are present", async () => {

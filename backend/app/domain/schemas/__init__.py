@@ -36,6 +36,7 @@ from .shot_render import (
 )
 from .shot_draft import ShotDraftRead
 from .shot_video import ShotVideoSubmitRequest, ShotVideoVersionRead
+from .reference import ReferenceAssetCreate, ReferenceCandidateRead, ReferenceMention, ReferenceOrigin
 
 __all__ = [
     "ProjectCreate",
@@ -69,4 +70,8 @@ __all__ = [
     "ShotDraftRead",
     "ShotVideoSubmitRequest",
     "ShotVideoVersionRead",
+    "ReferenceAssetCreate",
+    "ReferenceCandidateRead",
+    "ReferenceMention",
+    "ReferenceOrigin",
 ]

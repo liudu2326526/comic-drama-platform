@@ -53,3 +53,8 @@ async def test_full_parse_flow_eager(client: AsyncClient, db_session: AsyncSessi
     assert project_data["stage_raw"] == ProjectStageRaw.STORYBOARD_READY.value
     assert len(project_data["storyboards"]) == 10
     assert project_data["generationProgress"] == "0 / 10 已完成"
+    first_shot = project_data["storyboards"][0]
+    assert first_shot["source_excerpt"]
+    assert first_shot["source_anchor"]["match_score"] >= 0
+    assert len(first_shot["beats"]) >= 2
+    assert "0-" in first_shot["detail"]

@@ -206,61 +206,67 @@ async function onConfirm() {
       {{ emptyHint }}
     </div>
     <div v-else class="storyboard-layout">
-      <div class="storyboard-grid">
-        <article
-          v-for="shot in shots"
-          :key="shot.id"
-          class="story-card"
-          :class="{ active: selectedShotId === shot.id }"
-          @click="store.selectShot(shot.id)"
-        >
-          <div class="card-head">
-            <span>{{ String(shot.idx).padStart(2, "0") }}</span>
-            <div class="card-actions" @click.stop>
-              <button
-                class="icon-btn"
-                :disabled="!flags.canEditStoryboards || busy || isFirst(shot)"
-                :title="flags.canEditStoryboards ? '上移' : lockedTip"
-                @click="moveUp(shot)"
-              >↑</button>
-              <button
-                class="icon-btn"
-                :disabled="!flags.canEditStoryboards || busy || isLast(shot)"
-                :title="flags.canEditStoryboards ? '下移' : lockedTip"
-                @click="moveDown(shot)"
-              >↓</button>
-              <button
-                class="icon-btn"
-                :disabled="busy"
-                :title="flags.canEditStoryboards ? '编辑' : lockedTip"
-                @click="openEdit(shot)"
-              >✎</button>
-              <button
-                class="icon-btn danger"
-                :disabled="busy"
-                :title="flags.canEditStoryboards ? '删除' : lockedTip"
-                @click="removeShot(shot)"
-              >✕</button>
+      <div class="storyboard-scroll">
+        <div class="storyboard-grid">
+          <article
+            v-for="shot in shots"
+            :key="shot.id"
+            class="story-card"
+            :class="{ active: selectedShotId === shot.id }"
+            @click="store.selectShot(shot.id)"
+          >
+            <div class="card-head">
+              <span>{{ String(shot.idx).padStart(2, "0") }}</span>
+              <div class="card-actions" @click.stop>
+                <button
+                  class="icon-btn"
+                  :disabled="!flags.canEditStoryboards || busy || isFirst(shot)"
+                  :title="flags.canEditStoryboards ? '上移' : lockedTip"
+                  @click="moveUp(shot)"
+                >↑</button>
+                <button
+                  class="icon-btn"
+                  :disabled="!flags.canEditStoryboards || busy || isLast(shot)"
+                  :title="flags.canEditStoryboards ? '下移' : lockedTip"
+                  @click="moveDown(shot)"
+                >↓</button>
+                <button
+                  class="icon-btn"
+                  :disabled="busy"
+                  :title="flags.canEditStoryboards ? '编辑' : lockedTip"
+                  @click="openEdit(shot)"
+                >✎</button>
+                <button
+                  class="icon-btn danger"
+                  :disabled="busy"
+                  :title="flags.canEditStoryboards ? '删除' : lockedTip"
+                  @click="removeShot(shot)"
+                >✕</button>
+              </div>
             </div>
-          </div>
-          <strong>{{ shot.title }}</strong>
-          <p>{{ shot.description }}</p>
-        </article>
+            <strong>{{ shot.title }}</strong>
+            <p>{{ shot.description }}</p>
+          </article>
+        </div>
       </div>
 
-      <div v-if="currentShot" class="storyboard-detail">
-        <div class="detail-title">
-          <h3>
-            当前镜头：{{ String(currentShot.idx).padStart(2, "0") }}
-            {{ currentShot.title }}
-          </h3>
-          <span v-if="currentShot.duration_sec">时长建议 {{ currentShot.duration_sec }}s</span>
+      <aside v-if="currentShot" class="storyboard-detail-shell">
+        <div class="storyboard-detail">
+          <div class="detail-title">
+            <h3>
+              当前镜头：{{ String(currentShot.idx).padStart(2, "0") }}
+              {{ currentShot.title }}
+            </h3>
+            <span v-if="currentShot.duration_sec">时长建议 {{ currentShot.duration_sec }}s</span>
+          </div>
+          <div class="storyboard-detail-body">
+            <p>{{ currentShot.detail }}</p>
+            <div class="detail-tags">
+              <span v-for="tag in currentShot.tags" :key="tag">{{ tag }}</span>
+            </div>
+          </div>
         </div>
-        <p>{{ currentShot.detail }}</p>
-        <div class="detail-tags">
-          <span v-for="tag in currentShot.tags" :key="tag">{{ tag }}</span>
-        </div>
-      </div>
+      </aside>
     </div>
 
     <StoryboardEditorModal
@@ -276,9 +282,17 @@ async function onConfirm() {
 
 <style scoped>
 .storyboard-layout {
+  --storyboard-viewport-height: clamp(420px, calc(100vh - 220px), 760px);
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.9fr);
   gap: 18px;
+  align-items: start;
+}
+.storyboard-scroll {
+  height: var(--storyboard-viewport-height);
+  overflow-y: auto;
+  padding-right: 8px;
+  scrollbar-gutter: stable;
 }
 .storyboard-grid {
   display: grid;
@@ -352,17 +366,27 @@ async function onConfirm() {
   color: var(--text-muted);
   line-height: 1.5;
 }
+.storyboard-detail-shell {
+  position: sticky;
+  top: 88px;
+}
 .storyboard-detail {
+  display: flex;
+  flex-direction: column;
+  height: var(--storyboard-viewport-height);
   padding: 20px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-md);
+  overflow: hidden;
 }
 .detail-title {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 16px;
   margin-bottom: 16px;
+  flex: 0 0 auto;
 }
 .detail-title h3 {
   margin: 0;
@@ -371,6 +395,15 @@ async function onConfirm() {
 .detail-title span {
   font-size: 12px;
   color: var(--text-faint);
+}
+.storyboard-detail-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 8px;
+  scrollbar-gutter: stable;
+}
+.storyboard-detail-body p {
+  margin: 0;
 }
 .detail-tags {
   display: flex;
@@ -411,5 +444,27 @@ async function onConfirm() {
   border: 1px solid var(--panel-border);
   color: var(--text-primary);
   cursor: pointer;
+}
+
+@media (max-width: 980px) {
+  .storyboard-layout {
+    --storyboard-viewport-height: clamp(360px, calc(100vh - 180px), 620px);
+    grid-template-columns: 1fr;
+  }
+
+  .storyboard-detail-shell {
+    position: static;
+    order: -1;
+  }
+
+  .storyboard-detail {
+    height: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .storyboard-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

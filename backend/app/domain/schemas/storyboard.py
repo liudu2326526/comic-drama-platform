@@ -7,6 +7,9 @@ class StoryboardCreate(BaseModel):
     detail: Optional[str] = None
     duration_sec: Optional[float] = Field(default=None, ge=0, le=300)
     tags: Optional[list[str]] = None
+    source_excerpt: Optional[str] = None
+    source_anchor: Optional[dict[str, Any]] = None
+    beats: Optional[list[dict[str, Any]]] = None
     idx: Optional[int] = Field(default=None, ge=1, le=999)
 
 class StoryboardUpdate(BaseModel):
@@ -15,13 +18,16 @@ class StoryboardUpdate(BaseModel):
     detail: Optional[str] = None
     duration_sec: Optional[float] = Field(None, ge=0, le=300)
     tags: Optional[list[str]] = None
+    source_excerpt: Optional[str] = None
+    source_anchor: Optional[dict[str, Any]] = None
+    beats: Optional[list[dict[str, Any]]] = None
 
     @model_validator(mode="before")
     @classmethod
     def _reject_explicit_null(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        for field in ("title", "description", "duration_sec", "tags"):
+        for field in ("title", "description", "duration_sec", "tags", "source_anchor", "beats"):
             if field in data and data[field] is None:
                 raise ValueError(f"{field} 不允许显式为 null")
         return data

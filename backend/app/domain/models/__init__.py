@@ -3,6 +3,7 @@ from .character import Character
 from .export_task import ExportShotSnapshot, ExportTask
 from .job import Job
 from .project import Project
+from .project_reference_asset import ProjectReferenceAsset
 from .scene import Scene
 from .shot_draft import ShotDraft
 from .shot_render import ShotCharacterRef, ShotRender
@@ -17,6 +18,7 @@ __all__ = [
     "ExportTask",
     "Job",
     "Project",
+    "ProjectReferenceAsset",
     "Scene",
     "ShotDraft",
     "ShotCharacterRef",
