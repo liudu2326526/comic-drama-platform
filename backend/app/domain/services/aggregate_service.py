@@ -1,9 +1,11 @@
 import json
+from typing import cast
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.models import Project, StoryboardShot, Job, ExportTask, Character, Scene, ShotRender, ShotVideoRender
 from app.domain.schemas.project import ProjectDetail
 from app.domain.schemas.prompt_profile import derive_prompt_profile_state
+from app.domain.schemas.style_reference import StyleReferenceState, StyleReferenceStatus
 from app.pipeline.states import STAGE_ZH, ProjectStageRaw
 from app.infra.asset_store import build_asset_url
 
@@ -131,6 +133,19 @@ class AggregateService:
                 tags.append(f"人像库:{video_style_ref['asset_status']}")
             return tags
 
+        def _style_reference_state(kind: str) -> StyleReferenceState:
+            image_key = getattr(project, f"{kind}_style_reference_image_url")
+            raw_status = getattr(project, f"{kind}_style_reference_status") or ("succeeded" if image_key else "empty")
+            status: StyleReferenceStatus = "empty"
+            if raw_status in {"empty", "running", "succeeded", "failed"}:
+                status = cast(StyleReferenceStatus, raw_status)
+            return StyleReferenceState(
+                imageUrl=build_asset_url(image_key),
+                prompt=getattr(project, f"{kind}_style_reference_prompt"),
+                status=status,
+                error=getattr(project, f"{kind}_style_reference_error"),
+            )
+
         return ProjectDetail(
             id=project.id,
             name=project.name,
@@ -152,6 +167,8 @@ class AggregateService:
                 project.scene_prompt_profile_draft,
                 project.scene_prompt_profile_applied,
             ),
+            characterStyleReference=_style_reference_state("character"),
+            sceneStyleReference=_style_reference_state("scene"),
             storyboards=[{
                 "id": s.id,
                 "idx": s.idx,
@@ -184,7 +201,9 @@ class AggregateService:
                 "summary": c.summary,
                 "description": c.description,
                 "meta": _meta_to_tags(c.meta, c.video_style_ref),
-                "reference_image_url": build_asset_url(c.reference_image_url)
+                "reference_image_url": build_asset_url(c.full_body_image_url or c.reference_image_url),
+                "full_body_image_url": build_asset_url(c.full_body_image_url or c.reference_image_url),
+                "headshot_image_url": build_asset_url(c.headshot_image_url),
             } for c in chars],
             scenes=[{
                 "id": s.id,

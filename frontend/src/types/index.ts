@@ -9,8 +9,12 @@ import type {
   ShotVideoDurationPreset,
   ShotVideoModelType,
   ShotVideoResolution,
+  StyleReferenceKind,
+  StyleReferenceState,
   StoryboardDetail
 } from "./api";
+
+export type { StyleReferenceKind, StyleReferenceState };
 
 export type RenderStatus = "success" | "processing" | "warning" | "failed";
 
@@ -28,6 +32,8 @@ export interface CharacterAsset {
   description: string | null;
   meta: string[];
   reference_image_url?: string | null; // M3a 新增
+  full_body_image_url?: string | null;
+  headshot_image_url?: string | null;
 }
 
 export interface SceneAsset {
@@ -119,6 +125,8 @@ export interface ProjectData {
   scenes: SceneAsset[];
   characterPromptProfile: PromptProfileState;
   scenePromptProfile: PromptProfileState;
+  characterStyleReference: StyleReferenceState;
+  sceneStyleReference: StyleReferenceState;
   generationProgress: string;
   generationNotes: { input: string; suggestion: string };
   generationQueue: RenderQueueItem[];

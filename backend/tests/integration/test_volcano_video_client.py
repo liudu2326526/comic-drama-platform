@@ -40,3 +40,12 @@ async def test_video_task_create_uses_raw_prompt_and_reference_images(patched_se
     assert body["duration"] == 5
     assert body["resolution"] == "720p"
     assert body["ratio"] == "9:16"
+
+
+def test_real_volcano_client_uses_configured_timeout(patched_settings, monkeypatch):
+    assert hasattr(patched_settings, "ai_request_timeout_sec")
+    monkeypatch.setattr(patched_settings, "ai_request_timeout_sec", 123.0, raising=False)
+
+    client = RealVolcanoClient()
+
+    assert client._client.timeout.read == 123.0

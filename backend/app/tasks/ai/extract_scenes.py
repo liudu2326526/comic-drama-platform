@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from app.tasks.celery_app import celery_app
 from app.infra.db import get_session_factory
@@ -7,6 +6,7 @@ from app.config import get_settings
 from app.domain.models import Project, Scene, Job
 from app.pipeline.transitions import update_job_progress
 from app.tasks.ai.gen_scene_asset import gen_scene_asset
+from app.tasks.async_runner import dispatch_task_group, run_async_task
 from app.utils.json_utils import extract_json
 from sqlalchemy import select
 
@@ -17,7 +17,7 @@ def extract_scenes(self, job_id: str, project_id: str):
     """
     异步任务: 从小说中提取场景并创建子任务。
     """
-    asyncio.run(_run(job_id, project_id))
+    run_async_task(_run(job_id, project_id))
 
 async def _run(job_id: str, project_id: str) -> None:
     session_factory = get_session_factory()
@@ -95,7 +95,12 @@ async def _run(job_id: str, project_id: str) -> None:
         await session.commit()
 
         # 4. 只有在事务提交后才分发任务, 避免子任务找不到 Job 行
-        for sid, jid in sub_tasks:
-            gen_scene_asset.delay(sid, jid)
+        try:
+            await dispatch_task_group(gen_scene_asset, sub_tasks)
+        except Exception as exc:
+            error_msg = f"dispatch failed: {exc}"
+            await update_job_progress(session, job_id, status="failed", error_msg=error_msg)
+            await session.commit()
+            return
 
         logger.info(f"Project {project_id} scenes extracted, {len(scene_data_list)} sub-jobs dispatched")

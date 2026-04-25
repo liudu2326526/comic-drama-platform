@@ -4,6 +4,7 @@ import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
 import PanelSection from "@/components/common/PanelSection.vue";
 import PromptProfileCard from "@/components/common/PromptProfileCard.vue";
+import StyleReferenceCard from "@/components/common/StyleReferenceCard.vue";
 import ProgressBar from "@/components/common/ProgressBar.vue";
 import CharacterEditorModal from "./CharacterEditorModal.vue";
 import StageRollbackModal from "@/components/workflow/StageRollbackModal.vue";
@@ -26,10 +27,12 @@ const {
   selectedCharacter,
   selectedCharacterId,
   activeCharacterPromptProfileJobId,
+  activeCharacterStyleReferenceJobId,
   activeGenerateCharactersJobId,
   activeRegisterCharacterAssetJobId,
   activeRegisterCharacterAssetCharacterId,
   characterPromptProfileError,
+  characterStyleReferenceError,
   generateCharactersError,
   registerCharacterAssetError
 } = storeToRefs(store);
@@ -44,6 +47,12 @@ const starting = ref(false);
 const characterPromptProfile = computed(
   () => current.value?.characterPromptProfile ?? { draft: null, applied: null, status: "empty" as const }
 );
+const characterStyleReference = computed(() => ({
+  imageUrl: current.value?.characterStyleReference?.imageUrl ?? null,
+  prompt: current.value?.characterStyleReference?.prompt ?? null,
+  status: current.value?.characterStyleReference?.status ?? ("empty" as const),
+  error: characterStyleReferenceError.value ?? current.value?.characterStyleReference?.error ?? null
+}));
 
 function warnCharacterStageGate(message: string) {
   toast.warning(message, {
@@ -77,6 +86,26 @@ const promptProfileJobLabel = computed(() => {
   return j.total && j.total > 0
     ? `正在生成角色统一视觉设定… ${j.done}/${j.total}`
     : `正在生成角色统一视觉设定… ${j.progress}%`;
+});
+
+useJobPolling(activeCharacterStyleReferenceJobId, {
+  onProgress: () => void 0,
+  onSuccess: async () => {
+    try {
+      await store.reload();
+      store.markStyleReferenceJobSucceeded("character");
+      toast.success("统一角色形象参考图已生成");
+    } catch (e) {
+      store.markStyleReferenceJobFailed("character", (e as Error).message);
+    }
+  },
+  onError: (j, err) => {
+    const msg =
+      j?.error_msg ??
+      (err instanceof ApiError ? messageFor(err.code, err.message) : "生成失败");
+    store.markStyleReferenceJobFailed("character", msg);
+    toast.error(msg);
+  }
 });
 
 // ---- 生成主 job 轮询(空态入口) ----
@@ -202,6 +231,18 @@ async function handleGeneratePromptProfile() {
   }
   try {
     await store.generatePromptProfile("character");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "触发失败");
+  }
+}
+
+async function handleGenerateStyleReference() {
+  if (!flags.value.canEditCharacters) {
+    warnCharacterStageGate("当前阶段不能生成角色风格母版");
+    return;
+  }
+  try {
+    await store.generateStyleReference("character");
   } catch (e) {
     toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "触发失败");
   }
@@ -398,6 +439,9 @@ const selectedHasRegenJob = computed(() => !!selectedRegenJobId.value);
 const selectedRegenProgress = computed(() =>
   selectedRegenJobId.value ? regenProgressByJobId.value[selectedRegenJobId.value] ?? 0 : 0
 );
+const selectedFullBodyImageUrl = computed(
+  () => selectedCharacter.value?.full_body_image_url ?? selectedCharacter.value?.reference_image_url ?? null
+);
 </script>
 
 <template>
@@ -413,22 +457,31 @@ const selectedRegenProgress = computed(() =>
       </button>
     </template>
 
-    <PromptProfileCard
-      title="角色统一视觉设定"
-      description="先锁定项目级角色画风、脸型气质、服装材质和镜头语言，再生成角色参考图会更稳定。"
-      :profile="characterPromptProfile"
-      :editable="flags.canEditCharacters"
-      :generating="!!activeCharacterPromptProfileJobId"
-      :generate-job-label="promptProfileJobLabel"
-      :generate-error="characterPromptProfileError"
-      :submitting="starting || busy || !!activeGenerateCharactersJobId"
-      @generate="handleGeneratePromptProfile"
-      @save="handleSavePromptProfile"
-      @clear="handleClearPromptProfile"
-      @restore="handleRestorePromptProfile"
-      @confirm="handleConfirmPromptProfile"
-      @skip="handleSkipPromptProfile"
-    />
+    <div class="profile-reference-layout">
+      <PromptProfileCard
+        title="角色统一视觉设定"
+        description="先锁定项目级角色画风、脸型气质、服装材质和镜头语言，再生成角色参考图会更稳定。"
+        :profile="characterPromptProfile"
+        :editable="flags.canEditCharacters"
+        :generating="!!activeCharacterPromptProfileJobId"
+        :generate-job-label="promptProfileJobLabel"
+        :generate-error="characterPromptProfileError"
+        :submitting="starting || busy || !!activeGenerateCharactersJobId"
+        @generate="handleGeneratePromptProfile"
+        @save="handleSavePromptProfile"
+        @clear="handleClearPromptProfile"
+        @restore="handleRestorePromptProfile"
+        @confirm="handleConfirmPromptProfile"
+        @skip="handleSkipPromptProfile"
+      />
+      <StyleReferenceCard
+        kind="character"
+        :state="characterStyleReference"
+        :disabled="!flags.canEditCharacters"
+        :running="!!activeCharacterStyleReferenceJobId"
+        @generate="handleGenerateStyleReference"
+      />
+    </div>
 
     <!-- 生成主 job 进度 -->
     <div v-if="activeGenerateCharactersJobId" class="gen-banner running">
@@ -509,16 +562,27 @@ const selectedRegenProgress = computed(() =>
         </div>
 
         <div class="asset-layout">
-          <div class="reference-stage character-stage">
-            <div class="reference-badge">角色参考图</div>
-            <img
-              v-if="selectedCharacter.reference_image_url"
-              :src="selectedCharacter.reference_image_url"
-              :alt="selectedCharacter.name"
-              loading="lazy"
-              class="ref-image"
-            />
-            <div v-else class="silhouette"></div>
+          <div class="character-image-pair">
+            <figure class="asset-image-card">
+              <img
+                v-if="selectedFullBodyImageUrl"
+                :src="selectedFullBodyImageUrl"
+                alt="全身参考图"
+                loading="lazy"
+              />
+              <div v-else class="asset-image-card__empty">等待生成全身图</div>
+              <figcaption>全身参考图</figcaption>
+            </figure>
+            <figure class="asset-image-card">
+              <img
+                v-if="selectedCharacter.headshot_image_url"
+                :src="selectedCharacter.headshot_image_url"
+                alt="头像参考图"
+                loading="lazy"
+              />
+              <div v-else class="asset-image-card__empty">等待生成头像图</div>
+              <figcaption>头像参考图</figcaption>
+            </figure>
           </div>
 
           <div class="asset-info">
@@ -609,6 +673,13 @@ const selectedRegenProgress = computed(() =>
 }
 .asset-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .faint { color: var(--text-faint); font-size: 12px; }
+.profile-reference-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.8fr);
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 18px;
+}
 
 .asset-browser { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; }
 .asset-list-panel { padding: 18px; background: rgba(255,255,255,0.03); border: 1px solid var(--panel-border); border-radius: var(--radius-md); }
@@ -624,7 +695,34 @@ const selectedRegenProgress = computed(() =>
 .asset-detail-panel { padding: 24px; background: rgba(255,255,255,0.03); border: 1px solid var(--panel-border); border-radius: var(--radius-md); }
 .subpage-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
 .subpage-head h3 { margin: 0; font-size: 22px; }
-.asset-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; }
+.asset-layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 24px; }
+.character-image-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.asset-image-card {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: #0b0d1a;
+}
+.asset-image-card img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+}
+.asset-image-card__empty {
+  display: grid;
+  aspect-ratio: 3 / 4;
+  place-items: center;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.asset-image-card figcaption {
+  padding: 9px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
 .reference-stage { position: relative; min-height: 280px; border-radius: var(--radius-md); background: #0b0d1a; border: 1px solid var(--panel-border); overflow: hidden; }
 .reference-badge { position: absolute; top: 12px; left: 12px; padding: 4px 8px; background: rgba(0,0,0,0.5); color: #fff; font-size: 10px; border-radius: 4px; z-index: 1; }
 .silhouette { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); width: 120px; height: 200px; background: linear-gradient(180deg, #333, #111); border-radius: 60px 60px 0 0; }
@@ -635,4 +733,18 @@ const selectedRegenProgress = computed(() =>
 .asset-meta ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text-muted); line-height: 1.6; }
 .tag.accent { background: var(--accent-dim); color: var(--accent); padding: 4px 10px; border-radius: 999px; font-size: 12px; }
 .empty-note { padding: 40px 0; text-align: center; color: var(--text-faint); font-size: 14px; }
+
+@media (max-width: 1100px) {
+  .profile-reference-layout,
+  .asset-browser,
+  .asset-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .character-image-pair {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

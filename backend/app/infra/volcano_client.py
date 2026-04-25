@@ -85,6 +85,33 @@ class MockVolcanoClient(VolcanoClient):
         )
         logger.info(f"Mock Volcano Chat: model={model}, user_msg={user_msg[:50]}")
 
+        # 0.1 镜头草稿：参考图自动选择
+        if "请先为当前镜头选择参考图" in user_msg:
+            content = {
+                "reference_ids": [],
+                "selection_notes": {
+                    "scene": "mock 环境使用默认候选选择",
+                    "characters": ["mock 环境使用默认候选选择"],
+                },
+            }
+            resp_str = json.dumps(content, ensure_ascii=False)
+            print(f"\n[AI Chat Output] Model: {model}\nContent: {resp_str}\n")
+            return _ChatResponse(resp_str)
+
+        # 0.2 镜头草稿：提示词生成
+        if "请基于当前镜头与已选参考图" in user_msg:
+            content = {
+                "prompt": "mock 镜头草稿：根据已选场景与人物参考图生成稳定构图，保持角色身份一致，镜头缓慢推进。",
+                "optimizer_notes": {
+                    "issues": [],
+                    "principles": ["mock two-step draft"],
+                    "assumptions": ["使用默认参考图候选"],
+                },
+            }
+            resp_str = json.dumps(content, ensure_ascii=False)
+            print(f"\n[AI Chat Output] Model: {model}\nContent: {resp_str}\n")
+            return _ChatResponse(resp_str)
+
         # 1. 小说解析任务 (parse_novel)
         if "解析" in user_msg and "JSON" in user_msg:
             content = {
@@ -267,7 +294,7 @@ class RealVolcanoClient(VolcanoClient):
                 "Authorization": f"Bearer {s.ark_api_key}",
                 "Content-Type": "application/json",
             },
-            timeout=60.0,
+            timeout=s.ai_request_timeout_sec,
             trust_env=False,
         )
         self._settings = s

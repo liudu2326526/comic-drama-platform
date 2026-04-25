@@ -5,6 +5,7 @@ import { projectsApi } from "@/api/projects";
 import { storyboardsApi } from "@/api/storyboards";
 import { charactersApi } from "@/api/characters";
 import { promptProfilesApi } from "@/api/promptProfiles";
+import { styleReferencesApi } from "@/api/styleReferences";
 import { scenesApi } from "@/api/scenes";
 import { shotsApi } from "@/api/shots";
 import type { ProjectData, RenderShotItem, RenderStatus } from "@/types";
@@ -24,6 +25,7 @@ import type {
   ReferenceCandidate,
   PromptProfileKind,
   PromptProfileState,
+  StyleReferenceKind,
   RenderDraftRead,
   RenderSubmitRequest,
   RenderVersionRead,
@@ -59,11 +61,15 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   const generateCharactersError = ref<string | null>(null);
   const characterPromptProfileJob = ref<{ projectId: string; jobId: string } | null>(null);
   const characterPromptProfileError = ref<string | null>(null);
+  const characterStyleReferenceJob = ref<{ projectId: string; jobId: string } | null>(null);
+  const characterStyleReferenceError = ref<string | null>(null);
 
   const generateScenesJob = ref<{ projectId: string; jobId: string } | null>(null);
   const generateScenesError = ref<string | null>(null);
   const scenePromptProfileJob = ref<{ projectId: string; jobId: string } | null>(null);
   const scenePromptProfileError = ref<string | null>(null);
+  const sceneStyleReferenceJob = ref<{ projectId: string; jobId: string } | null>(null);
+  const sceneStyleReferenceError = ref<string | null>(null);
 
   const registerCharacterAssetJob = ref<{ projectId: string; jobId: string; characterId: string } | null>(null);
   const registerCharacterAssetError = ref<string | null>(null);
@@ -101,11 +107,17 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   const activeCharacterPromptProfileJobId = computed<string | null>(() =>
     scopedJobId(characterPromptProfileJob.value)
   );
+  const activeCharacterStyleReferenceJobId = computed<string | null>(() =>
+    scopedJobId(characterStyleReferenceJob.value)
+  );
   const activeGenerateScenesJobId = computed<string | null>(() =>
     scopedJobId(generateScenesJob.value)
   );
   const activeScenePromptProfileJobId = computed<string | null>(() =>
     scopedJobId(scenePromptProfileJob.value)
+  );
+  const activeSceneStyleReferenceJobId = computed<string | null>(() =>
+    scopedJobId(sceneStyleReferenceJob.value)
   );
   const activeRegisterCharacterAssetJobId = computed<string | null>(() =>
     current.value && registerCharacterAssetJob.value && registerCharacterAssetJob.value.projectId === current.value.id
@@ -158,6 +170,14 @@ export const useWorkbenchStore = defineStore("workbench", () => {
 
   function promptProfileErrorRef(kind: PromptProfileKind) {
     return kind === "character" ? characterPromptProfileError : scenePromptProfileError;
+  }
+
+  function styleReferenceJobRef(kind: StyleReferenceKind) {
+    return kind === "character" ? characterStyleReferenceJob : sceneStyleReferenceJob;
+  }
+
+  function styleReferenceErrorRef(kind: StyleReferenceKind) {
+    return kind === "character" ? characterStyleReferenceError : sceneStyleReferenceError;
   }
 
   function promptProfileStateFor(kind: PromptProfileKind): PromptProfileState | null {
@@ -382,8 +402,18 @@ export const useWorkbenchStore = defineStore("workbench", () => {
           const failed = lastFailed("gen_character_prompt_profile");
           if (failed) characterPromptProfileError.value = failed.error_msg;
         }
+
+        const styleJob = running("gen_character_style_reference");
+        if (styleJob) {
+          characterStyleReferenceJob.value = { projectId: current.value.id, jobId: styleJob.id };
+          characterStyleReferenceError.value = null;
+        } else {
+          const failed = lastFailed("gen_character_style_reference");
+          characterStyleReferenceError.value = failed?.error_msg ?? null;
+        }
       } else {
         characterPromptProfileJob.value = null;
+        characterStyleReferenceJob.value = null;
       }
 
       if (stage === "characters_locked") {
@@ -394,8 +424,18 @@ export const useWorkbenchStore = defineStore("workbench", () => {
           const failed = lastFailed("gen_scene_prompt_profile");
           if (failed) scenePromptProfileError.value = failed.error_msg;
         }
+
+        const styleJob = running("gen_scene_style_reference");
+        if (styleJob) {
+          sceneStyleReferenceJob.value = { projectId: current.value.id, jobId: styleJob.id };
+          sceneStyleReferenceError.value = null;
+        } else {
+          const failed = lastFailed("gen_scene_style_reference");
+          sceneStyleReferenceError.value = failed?.error_msg ?? null;
+        }
       } else {
         scenePromptProfileJob.value = null;
+        sceneStyleReferenceJob.value = null;
       }
 
       const lcaJob = running("register_character_asset");
@@ -562,6 +602,24 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     const ack = await promptProfilesApi.generate(current.value.id, kind);
     promptProfileJobRef(kind).value = { projectId: current.value.id, jobId: ack.job_id };
     return ack.job_id;
+  }
+
+  async function generateStyleReference(kind: StyleReferenceKind): Promise<string> {
+    if (!current.value) throw new Error("generateStyleReference: no current project");
+    styleReferenceErrorRef(kind).value = null;
+    const ack = await styleReferencesApi.generateStyleReference(current.value.id, kind);
+    styleReferenceJobRef(kind).value = { projectId: current.value.id, jobId: ack.job_id };
+    return ack.job_id;
+  }
+
+  function markStyleReferenceJobSucceeded(kind: StyleReferenceKind) {
+    styleReferenceJobRef(kind).value = null;
+    styleReferenceErrorRef(kind).value = null;
+  }
+
+  function markStyleReferenceJobFailed(kind: StyleReferenceKind, msg: string) {
+    styleReferenceJobRef(kind).value = null;
+    styleReferenceErrorRef(kind).value = msg;
   }
 
   async function savePromptProfileDraft(
@@ -945,8 +1003,10 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     activeParseJobId, activeGenStoryboardJobId, parseError,
     activeGenerateCharactersJobId, generateCharactersError,
     activeCharacterPromptProfileJobId, characterPromptProfileError,
+    activeCharacterStyleReferenceJobId, characterStyleReferenceError,
     activeGenerateScenesJobId, generateScenesError,
     activeScenePromptProfileJobId, scenePromptProfileError,
+    activeSceneStyleReferenceJobId, sceneStyleReferenceError,
     regenJobIdFor, activeRegenJobEntries,
     currentShot, selectedCharacter, selectedScene,
     load, reload, rollback,
@@ -958,6 +1018,7 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     attachGenerateCharactersJob,
     generatePromptProfile, savePromptProfileDraft, clearPromptProfileDraft,
     restoreAppliedPromptProfileDraft, markPromptProfileJobSucceeded, markPromptProfileJobFailed,
+    generateStyleReference, markStyleReferenceJobSucceeded, markStyleReferenceJobFailed,
     confirmPromptProfileAndGenerate, skipPromptProfileAndGenerate,
     patchCharacter, regenerateCharacter, registerCharacterAsset,
     generateScenes, markGenerateScenesSucceeded, markGenerateScenesFailed,

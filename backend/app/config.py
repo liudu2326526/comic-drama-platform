@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     asset_wait_timeout_sec: float = 120.0
 
     # 调用重试(Chat/Image 粗粒度)
+    ai_request_timeout_sec: float = 180.0
     ai_retry_max: int = 3
     ai_retry_base_sec: float = 4.0   # 指数退避 4/16/64
 

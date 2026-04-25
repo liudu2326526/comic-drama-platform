@@ -1,7 +1,9 @@
 import asyncio
+import inspect
 import json
 import logging
 import re
+from collections.abc import Callable
 from typing import Any
 
 from app.infra.db import get_session_factory
@@ -9,6 +11,7 @@ from app.infra.volcano_client import get_volcano_client
 from app.domain.models import Project, StoryboardShot
 from app.pipeline import ProjectStageRaw, advance_stage, update_job_progress
 from app.pipeline.storyboard_states import StoryboardStatus
+from app.tasks.async_runner import run_async_task
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -195,6 +198,58 @@ async def _chat_json(client, model: str, messages: list[dict[str, str]]) -> Any:
     resp = await client.chat_completions(model=model, messages=messages)
     return extract_json(resp.choices[0].message.content)
 
+
+async def _maybe_notify_item_done(callback: Callable[[int], Any] | None, done: int) -> None:
+    if callback is None:
+        return
+    result = callback(done)
+    if inspect.isawaitable(result):
+        await result
+
+
+async def _expand_storyboard_segment(
+    client,
+    model: str,
+    segment: dict[str, Any],
+    source_excerpt: str,
+    source_anchor: dict[str, Any],
+) -> dict[str, Any]:
+    expanded_data = await _chat_json(
+        client,
+        model,
+        [
+            {"role": "system", "content": "你是短剧分镜导演，只返回纯 JSON 对象，不包含任何解释。"},
+            {"role": "user", "content": build_expand_segment_prompt(segment, source_excerpt)},
+        ],
+    )
+    if not isinstance(expanded_data, dict):
+        raise ValueError("具体分镜扩写必须返回 JSON 对象")
+    return normalize_expanded_storyboard(segment, expanded_data, source_excerpt, source_anchor)
+
+
+async def _expand_storyboard_segments(
+    client,
+    model: str,
+    segments: list[dict[str, Any]],
+    source_pairs: list[tuple[str, dict[str, Any]]],
+    *,
+    on_item_done: Callable[[int], Any] | None = None,
+) -> list[dict[str, Any]]:
+    tasks = [
+        asyncio.create_task(
+            _expand_storyboard_segment(client, model, segment, source_excerpt, source_anchor)
+        )
+        for segment, (source_excerpt, source_anchor) in zip(segments, source_pairs, strict=False)
+    ]
+
+    storyboards_data: list[dict[str, Any]] = []
+    for done, task in enumerate(asyncio.as_completed(tasks), start=1):
+        storyboards_data.append(await task)
+        await _maybe_notify_item_done(on_item_done, done)
+
+    return sorted(storyboards_data, key=lambda item: item["idx"])
+
+
 async def _gen_storyboard_task(project_id: str, job_id: str):
     session_factory = get_session_factory()
     async with session_factory() as session:
@@ -235,27 +290,18 @@ async def _gen_storyboard_task(project_id: str, job_id: str):
             await update_job_progress(session, job_id, progress=35, done=2, total=total_steps)
             await session.commit()
 
-            storyboards_data: list[dict[str, Any]] = []
-            for index, (segment, (source_excerpt, source_anchor)) in enumerate(
-                zip(segments, source_pairs, strict=False),
-                start=1,
-            ):
-                expanded_data = await _chat_json(
-                    client,
-                    settings.ark_chat_model,
-                    [
-                        {"role": "system", "content": "你是短剧分镜导演，只返回纯 JSON 对象，不包含任何解释。"},
-                        {"role": "user", "content": build_expand_segment_prompt(segment, source_excerpt)},
-                    ],
-                )
-                if not isinstance(expanded_data, dict):
-                    raise ValueError("具体分镜扩写必须返回 JSON 对象")
-                storyboards_data.append(
-                    normalize_expanded_storyboard(segment, expanded_data, source_excerpt, source_anchor)
-                )
-                progress = 35 + int(55 * index / len(segments))
-                await update_job_progress(session, job_id, progress=progress, done=index + 2, total=total_steps)
+            async def on_expand_done(done_count: int) -> None:
+                progress = 35 + int(55 * done_count / len(segments))
+                await update_job_progress(session, job_id, progress=progress, done=done_count + 2, total=total_steps)
                 await session.commit()
+
+            storyboards_data = await _expand_storyboard_segments(
+                client,
+                settings.ark_chat_model,
+                segments,
+                source_pairs,
+                on_item_done=on_expand_done,
+            )
 
             # 5. 批量插入分镜
             # 先清理已有的分镜(如果是重跑的话,但 M2 暂不考虑复杂重跑逻辑)
@@ -294,4 +340,4 @@ async def _gen_storyboard_task(project_id: str, job_id: str):
 
 @celery_app.task(name="ai.gen_storyboard")
 def gen_storyboard(project_id: str, job_id: str):
-    asyncio.run(_gen_storyboard_task(project_id, job_id))
+    run_async_task(_gen_storyboard_task(project_id, job_id))

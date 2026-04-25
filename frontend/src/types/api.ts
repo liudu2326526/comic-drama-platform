@@ -107,6 +107,16 @@ export interface PromptProfileState {
   status: PromptProfileStatus;
 }
 
+export type StyleReferenceKind = "character" | "scene";
+export type StyleReferenceStatus = "empty" | "running" | "succeeded" | "failed";
+
+export interface StyleReferenceState {
+  imageUrl: string | null;
+  prompt: string | null;
+  status: StyleReferenceStatus;
+  error: string | null;
+}
+
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 
 export interface JobResultPayload {

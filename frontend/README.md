@@ -100,6 +100,11 @@ M3a 在 M2 的分镜闭环之上,打通了"生成角色 → 锁定主角 → 生
 | `POST /api/v1/projects/{id}/scenes/{sid}/lock` | `SceneAssetsPanel` "锁定场景" |
 | `POST /api/v1/projects/{id}/storyboards/{shot_id}/bind_scene` | `SceneAssetsPanel` "绑定当前选中镜头" |
 
+### Visual style reference UI
+
+Character and scene setup pages render `StyleReferenceCard` next to `PromptProfileCard`.
+Character detail views show full-body and headshot images; scene detail views label generated scene images as no-person references.
+
 ### 阶段门
 
 | 操作 | 允许的 `stage_raw` |

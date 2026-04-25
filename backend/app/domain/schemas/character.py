@@ -13,6 +13,8 @@ class CharacterOut(BaseModel):
     description: str | None
     meta: list[str] = []              # 前端展示串,由 meta/video_style_ref 摘要化
     reference_image_url: str | None   # 前端直接展示的 URL(aggregate 层用 OBS_PUBLIC_BASE_URL 拼)
+    full_body_image_url: str | None = None
+    headshot_image_url: str | None = None
 
 
 class CharacterUpdate(BaseModel):

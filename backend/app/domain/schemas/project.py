@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, model_validator
 from typing import Any
 
 from app.domain.schemas.prompt_profile import PromptProfileState
+from app.domain.schemas.style_reference import StyleReferenceState
 
 
 class ProjectCreate(BaseModel):
@@ -85,6 +86,8 @@ class ProjectDetail(BaseModel):
     projectOverview: str = ""
     characterPromptProfile: PromptProfileState = PromptProfileState()
     scenePromptProfile: PromptProfileState = PromptProfileState()
+    characterStyleReference: StyleReferenceState = StyleReferenceState()
+    sceneStyleReference: StyleReferenceState = StyleReferenceState()
     storyboards: list = []
     characters: list = []
     scenes: list = []

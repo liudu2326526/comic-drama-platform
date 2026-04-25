@@ -4,6 +4,7 @@ import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
 import PanelSection from "@/components/common/PanelSection.vue";
 import PromptProfileCard from "@/components/common/PromptProfileCard.vue";
+import StyleReferenceCard from "@/components/common/StyleReferenceCard.vue";
 import ProgressBar from "@/components/common/ProgressBar.vue";
 import SceneEditorModal from "./SceneEditorModal.vue";
 import StageRollbackModal from "@/components/workflow/StageRollbackModal.vue";
@@ -21,8 +22,10 @@ const {
   selectedScene,
   selectedSceneId,
   activeScenePromptProfileJobId,
+  activeSceneStyleReferenceJobId,
   activeGenerateScenesJobId,
   scenePromptProfileError,
+  sceneStyleReferenceError,
   generateScenesError,
 } = storeToRefs(store);
 const { flags } = useStageGate();
@@ -36,6 +39,12 @@ const starting = ref(false);
 const scenePromptProfile = computed(
   () => current.value?.scenePromptProfile ?? { draft: null, applied: null, status: "empty" as const }
 );
+const sceneStyleReference = computed(() => ({
+  imageUrl: current.value?.sceneStyleReference?.imageUrl ?? null,
+  prompt: current.value?.sceneStyleReference?.prompt ?? null,
+  status: current.value?.sceneStyleReference?.status ?? ("empty" as const),
+  error: sceneStyleReferenceError.value ?? current.value?.sceneStyleReference?.error ?? null
+}));
 
 function warnSceneStageGate(message: string) {
   toast.warning(message, {
@@ -69,6 +78,26 @@ const promptProfileJobLabel = computed(() => {
   return j.total && j.total > 0
     ? `正在生成场景统一视觉设定… ${j.done}/${j.total}`
     : `正在生成场景统一视觉设定… ${j.progress}%`;
+});
+
+useJobPolling(activeSceneStyleReferenceJobId, {
+  onProgress: () => void 0,
+  onSuccess: async () => {
+    try {
+      await store.reload();
+      store.markStyleReferenceJobSucceeded("scene");
+      toast.success("统一场景视觉参考图已生成");
+    } catch (e) {
+      store.markStyleReferenceJobFailed("scene", (e as Error).message);
+    }
+  },
+  onError: (j, err) => {
+    const msg =
+      j?.error_msg ??
+      (err instanceof ApiError ? messageFor(err.code, err.message) : "生成失败");
+    store.markStyleReferenceJobFailed("scene", msg);
+    toast.error(msg);
+  }
 });
 
 // ---- 主 job 轮询 ----
@@ -150,6 +179,18 @@ async function handleGeneratePromptProfile() {
   }
   try {
     await store.generatePromptProfile("scene");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "触发失败");
+  }
+}
+
+async function handleGenerateStyleReference() {
+  if (!flags.value.canEditScenes) {
+    warnSceneStageGate("当前阶段不能生成场景风格母版");
+    return;
+  }
+  try {
+    await store.generateStyleReference("scene");
   } catch (e) {
     toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "触发失败");
   }
@@ -325,22 +366,31 @@ const selectedRegenProgress = computed(() =>
       </button>
     </template>
 
-    <PromptProfileCard
-      title="场景统一视觉设定"
-      description="先统一时代、空间锚点、色彩光影和镜头调度，再生成场景母版会更利于后续分镜复用。"
-      :profile="scenePromptProfile"
-      :editable="flags.canEditScenes"
-      :generating="!!activeScenePromptProfileJobId"
-      :generate-job-label="promptProfileJobLabel"
-      :generate-error="scenePromptProfileError"
-      :submitting="starting || busy || !!activeGenerateScenesJobId"
-      @generate="handleGeneratePromptProfile"
-      @save="handleSavePromptProfile"
-      @clear="handleClearPromptProfile"
-      @restore="handleRestorePromptProfile"
-      @confirm="handleConfirmPromptProfile"
-      @skip="handleSkipPromptProfile"
-    />
+    <div class="profile-reference-layout">
+      <PromptProfileCard
+        title="场景统一视觉设定"
+        description="先统一时代、空间锚点、色彩光影和镜头调度，再生成场景母版会更利于后续分镜复用。"
+        :profile="scenePromptProfile"
+        :editable="flags.canEditScenes"
+        :generating="!!activeScenePromptProfileJobId"
+        :generate-job-label="promptProfileJobLabel"
+        :generate-error="scenePromptProfileError"
+        :submitting="starting || busy || !!activeGenerateScenesJobId"
+        @generate="handleGeneratePromptProfile"
+        @save="handleSavePromptProfile"
+        @clear="handleClearPromptProfile"
+        @restore="handleRestorePromptProfile"
+        @confirm="handleConfirmPromptProfile"
+        @skip="handleSkipPromptProfile"
+      />
+      <StyleReferenceCard
+        kind="scene"
+        :state="sceneStyleReference"
+        :disabled="!flags.canEditScenes"
+        :running="!!activeSceneStyleReferenceJobId"
+        @generate="handleGenerateStyleReference"
+      />
+    </div>
 
     <div v-if="activeGenerateScenesJobId" class="gen-banner running">
       <div class="gen-head">
@@ -401,7 +451,7 @@ const selectedRegenProgress = computed(() =>
 
         <div class="asset-layout">
           <div class="reference-stage scene-stage" :class="themeClass(selectedScene)">
-            <div class="reference-badge">场景参考图</div>
+            <div class="reference-badge">无人场景参考图</div>
             <img
               v-if="selectedScene.reference_image_url"
               :src="selectedScene.reference_image_url"
@@ -420,6 +470,7 @@ const selectedRegenProgress = computed(() =>
             <article class="asset-copy">
               <label>场景描述</label>
               <p>{{ selectedScene.description || "(尚无描述)" }}</p>
+              <p class="asset-hint">只保留环境、建筑、道具、天气和光影；画面中不应出现人物。</p>
             </article>
 
             <article class="asset-meta">
@@ -476,6 +527,13 @@ const selectedRegenProgress = computed(() =>
 .ref-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .asset-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .faint { color: var(--text-faint); font-size: 12px; }
+.profile-reference-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.8fr);
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 18px;
+}
 
 .asset-browser { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; }
 .asset-list-panel { padding: 18px; background: rgba(255,255,255,0.03); border: 1px solid var(--panel-border); border-radius: var(--radius-md); }
@@ -501,8 +559,17 @@ const selectedRegenProgress = computed(() =>
 .asset-info { display: flex; flex-direction: column; gap: 20px; }
 .asset-copy label { display: block; font-size: 12px; color: var(--accent); margin-bottom: 8px; }
 .asset-copy p { margin: 0; font-size: 14px; color: var(--text-muted); line-height: 1.6; }
+.asset-copy .asset-hint { margin-top: 10px; color: var(--text-faint); font-size: 12px; }
 .asset-meta span { display: block; font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
 .asset-meta ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text-muted); line-height: 1.6; }
 .tag { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); padding: 4px 10px; border-radius: 999px; font-size: 12px; }
 .empty-note { padding: 40px 0; text-align: center; color: var(--text-faint); font-size: 14px; }
+
+@media (max-width: 1100px) {
+  .profile-reference-layout,
+  .asset-browser,
+  .asset-layout {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

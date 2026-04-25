@@ -1,11 +1,16 @@
+import asyncio
+import importlib
+import json
+import re
+from types import SimpleNamespace
+
 import pytest
 
-from app.tasks.ai.gen_storyboard import (
-    build_expand_segment_prompt,
-    build_segment_plan_prompt,
-    match_source_excerpt,
-    normalize_expanded_storyboard,
-)
+gen_storyboard = importlib.import_module("app.tasks.ai.gen_storyboard")
+build_expand_segment_prompt = gen_storyboard.build_expand_segment_prompt
+build_segment_plan_prompt = gen_storyboard.build_segment_plan_prompt
+match_source_excerpt = gen_storyboard.match_source_excerpt
+normalize_expanded_storyboard = gen_storyboard.normalize_expanded_storyboard
 
 
 def test_match_source_excerpt_uses_query_window():
@@ -82,3 +87,60 @@ def test_normalize_expanded_storyboard_rejects_missing_beats():
             "原文",
             {"start": 0, "end": 2},
         )
+
+
+@pytest.mark.asyncio
+async def test_expand_storyboard_segments_runs_ai_calls_concurrently():
+    active = 0
+    max_active = 0
+
+    class FakeClient:
+        async def chat_completions(self, model: str, messages: list[dict]):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            try:
+                await asyncio.sleep(0.05)
+                user_msg = messages[-1]["content"]
+                idx = int(re.search(r'"idx":\s*(\d+)', user_msg).group(1))
+                content = {
+                    "idx": idx,
+                    "title": f"分镜 {idx}",
+                    "description": f"扩写 {idx}",
+                    "detail": "8秒，9:16竖屏。0-4s：远景固定机位；4-8s：中景缓慢推进。",
+                    "duration_sec": 8,
+                    "tags": [f"分镜{idx}"],
+                    "beats": [
+                        {"time": "0-4s", "shot_type": "远景", "camera_movement": "固定机位", "action": "建立空间"},
+                        {"time": "4-8s", "shot_type": "中景", "camera_movement": "缓慢推进", "action": "推进情绪"},
+                    ],
+                }
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(content, ensure_ascii=False)))]
+                )
+            finally:
+                active -= 1
+
+    segments = [
+        {"idx": 1, "title": "一", "description": "一", "duration_sec": 8},
+        {"idx": 2, "title": "二", "description": "二", "duration_sec": 8},
+        {"idx": 3, "title": "三", "description": "三", "duration_sec": 8},
+    ]
+    source_pairs = [
+        ("原文一", {"start": 0, "end": 3}),
+        ("原文二", {"start": 3, "end": 6}),
+        ("原文三", {"start": 6, "end": 9}),
+    ]
+    progress: list[int] = []
+
+    results = await gen_storyboard._expand_storyboard_segments(
+        FakeClient(),
+        "test-model",
+        segments,
+        source_pairs,
+        on_item_done=lambda done: progress.append(done),
+    )
+
+    assert max_active > 1
+    assert [item["idx"] for item in results] == [1, 2, 3]
+    assert progress == [1, 2, 3]

@@ -183,6 +183,14 @@ draft → storyboard_ready → characters_locked → scenes_locked
 - 非法跃迁：抛 `InvalidTransition` → HTTP 403，统一错误码 `40301`
 - `stage_raw` 是英文枚举，前端据此做 UI 门控；`stage` 中文字段仅用于展示
 
+### 视觉参考图与资产生成
+
+- 项目级参考图分两类：`统一角色形象参考图` 和 `统一场景视觉参考图`，分别由 `gen_character_style_reference` / `gen_scene_style_reference` 异步任务生成并持久化到 OBS。
+- 角色参考图只传入具体角色资产生成；场景参考图只传入具体场景资产生成。两者不会互相串用。
+- 项目级参考图必须先于具体资产生成才会生效；后补或重新生成项目级参考图不会自动重刷已生成的角色/场景图，需要用户显式重新生成具体资产。
+- 阶段门控会限制可编辑窗口：角色参考图在 `storyboard_ready` 可生成，场景参考图在 `characters_locked` 可生成；进入 `scenes_locked` 后若要重生成场景参考图，需要先回退到可编辑阶段。
+- 批量分镜、批量角色图、批量场景图等多子任务链路采用异步 job + 并发子任务模型，父任务进度由子任务终态汇总；任何子任务失败都应让父任务失败，避免前端长期停留在 running。
+
 ### 统一响应信封 & 错误码
 
 所有 HTTP 响应结构为 `{"code": int, "message": str, "data": T | null}`。错误码表：

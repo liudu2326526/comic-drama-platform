@@ -32,7 +32,9 @@ def _to_character_out(c: Character) -> CharacterOut:
         summary=c.summary,
         description=c.description,
         meta=[],
-        reference_image_url=c.reference_image_url,
+        reference_image_url=c.full_body_image_url or c.reference_image_url,
+        full_body_image_url=c.full_body_image_url or c.reference_image_url,
+        headshot_image_url=c.headshot_image_url,
     )
 
 @router.get("", response_model=Envelope[list[CharacterOut]])

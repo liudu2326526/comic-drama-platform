@@ -128,6 +128,13 @@ Batch render remains M3c; export remains M4.
 - **并发安全**: 锁定主角操作使用 `SELECT FOR UPDATE` 确保一个项目在并发请求下只能有一个主角。
 - **存储优化**: 采用 `Temporary Download -> OBS Upload -> Cleanup` 流程，后端本地不保留长期资产文件。
 
+### Visual style references
+
+Project-level character and scene style references are generated through async jobs:
+`gen_character_style_reference` and `gen_scene_style_reference`. Character asset generation now writes
+`full_body_image_url`, `headshot_image_url`, and keeps `reference_image_url` as a full-body compatibility alias.
+Scene asset prompts must keep explicit no-person constraints.
+
 架构原则:`api/` 只做薄路由,`domain/services/` 不改状态字段,**所有 `project.stage` 写入必须经过 `pipeline/transitions.py`**。
 
 ---

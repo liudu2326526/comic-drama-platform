@@ -25,6 +25,8 @@ JOB_KIND_VALUES = [
     "gen_scene_prompt_profile",
     "regen_character_assets_batch",
     "regen_scene_assets_batch",
+    "gen_character_style_reference",
+    "gen_scene_style_reference",
 ]
 JOB_STATUS_VALUES = ["queued", "running", "succeeded", "failed", "canceled"]
 

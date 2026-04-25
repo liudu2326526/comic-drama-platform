@@ -26,5 +26,7 @@ class Character(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reference_image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    full_body_image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    headshot_image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     video_style_ref: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

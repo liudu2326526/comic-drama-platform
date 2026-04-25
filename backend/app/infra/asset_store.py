@@ -9,7 +9,15 @@ from app.infra import obs_store
 from app.infra.ulid import new_id
 from app.infra.volcano_errors import classify_http, classify_exception
 
-ALLOWED_KINDS = {"character", "scene", "shot"}
+ALLOWED_KINDS = {
+    "character",
+    "scene",
+    "shot",
+    "character_style_reference",
+    "scene_style_reference",
+    "character_full_body",
+    "character_headshot",
+}
 
 
 async def persist_generated_asset(*, url: str, project_id: str, kind: str,

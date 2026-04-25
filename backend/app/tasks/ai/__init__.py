@@ -11,6 +11,7 @@ from .gen_character_prompt_profile import gen_character_prompt_profile
 from .gen_scene_prompt_profile import gen_scene_prompt_profile
 from .regen_character_assets_batch import regen_character_assets_batch
 from .regen_scene_assets_batch import regen_scene_assets_batch
+from .gen_style_reference import gen_character_style_reference, gen_scene_style_reference
 from .render_shot import render_shot_task
 
 __all__ = [
@@ -27,5 +28,7 @@ __all__ = [
     "gen_scene_prompt_profile",
     "regen_character_assets_batch",
     "regen_scene_assets_batch",
+    "gen_character_style_reference",
+    "gen_scene_style_reference",
     "render_shot_task"
 ]

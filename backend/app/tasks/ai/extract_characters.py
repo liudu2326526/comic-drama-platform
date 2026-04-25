@@ -1,6 +1,4 @@
-import asyncio
 import logging
-import threading
 
 from sqlalchemy import select
 
@@ -10,33 +8,12 @@ from app.infra import get_volcano_client
 from app.infra.db import get_session_factory
 from app.pipeline.transitions import update_job_progress
 from app.tasks.ai.gen_character_asset import gen_character_asset
+from app.tasks.async_runner import dispatch_task_group, run_async_task
 from app.tasks.celery_app import celery_app
 from app.utils.json_utils import extract_json
 
 logger = logging.getLogger(__name__)
 VALID_ROLE_TYPES = {"supporting", "atmosphere"}
-
-
-def _run_async(coro: object) -> None:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.run(coro)
-        return
-
-    error: list[BaseException] = []
-
-    def runner() -> None:
-        try:
-            asyncio.run(coro)
-        except BaseException as exc:  # pragma: no cover
-            error.append(exc)
-
-    thread = threading.Thread(target=runner, daemon=True)
-    thread.start()
-    thread.join()
-    if error:
-        raise error[0]
 
 
 def _normalize_character_rows(payload: object) -> list[dict[str, str | None]]:
@@ -180,8 +157,13 @@ async def _run(project_id: str, job_id: str) -> None:
             await session.commit()
 
             try:
-                for character_id, child_job in zip(character_ids, child_jobs, strict=False):
-                    gen_character_asset.delay(character_id, child_job.id)
+                await dispatch_task_group(
+                    gen_character_asset,
+                    [
+                        (character_id, child_job.id)
+                        for character_id, child_job in zip(character_ids, child_jobs, strict=False)
+                    ],
+                )
             except Exception as exc:
                 error_msg = f"dispatch failed: {exc}"
                 await update_job_progress(session, next_job.id, status="failed", error_msg=error_msg)
@@ -214,4 +196,4 @@ async def _run(project_id: str, job_id: str) -> None:
 
 @celery_app.task(name="ai.extract_characters", queue="ai", bind=True)
 def extract_characters(self, project_id: str, job_id: str) -> None:
-    _run_async(_run(project_id, job_id))
+    run_async_task(_run(project_id, job_id))

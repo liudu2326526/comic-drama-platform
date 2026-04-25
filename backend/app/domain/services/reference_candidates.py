@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 
 from app.domain.models import Character, Scene, StoryboardShot
 
 
+CHARACTER_REFERENCE_KINDS = {"character", "character_headshot"}
+
+
 def build_reference_candidates(
     shot: StoryboardShot,
-    scenes: list[Scene],
-    characters: list[Character],
+    scenes: Sequence[Scene],
+    characters: Sequence[Character],
     asset_ref: Callable[[str | None], str | None],
 ) -> list[dict]:
     shot_text = _compose_text(shot.title, shot.description, shot.detail, " ".join(shot.tags or []))
@@ -21,11 +24,15 @@ def build_reference_candidates(
         reverse=True,
     )
     ordered_characters = sorted(
-        [character for character in characters if asset_ref(character.reference_image_url)],
+        [
+            character
+            for character in characters
+            if asset_ref(character.full_body_image_url or character.reference_image_url) or asset_ref(character.headshot_image_url)
+        ],
         key=lambda character: _character_sort_key(shot_text, shot_terms, character),
         reverse=True,
     )
-    return [
+    items = [
         *[
             {
                 "id": f"scene:{scene.id}",
@@ -40,26 +47,43 @@ def build_reference_candidates(
             }
             for scene in ordered_scenes
         ],
-        *[
-            {
-                "id": f"character:{character.id}",
-                "kind": "character",
-                "source_id": character.id,
-                "name": character.name,
-                "alias": character.name,
-                "mention_key": f"character:{character.id}",
-                "image_url": asset_ref(character.reference_image_url),
-                "origin": "auto",
-                "reason": _character_reason(shot_text, shot_terms, character),
-            }
-            for character in ordered_characters
-        ],
     ]
+    for character in ordered_characters:
+        full_body_key = character.full_body_image_url or character.reference_image_url
+        if asset_ref(full_body_key):
+            items.append(
+                {
+                    "id": f"character:{character.id}",
+                    "kind": "character",
+                    "source_id": character.id,
+                    "name": character.name,
+                    "alias": f"{character.name}-全身",
+                    "mention_key": f"character:{character.id}",
+                    "image_url": asset_ref(full_body_key),
+                    "origin": "auto",
+                    "reason": _character_reason(shot_text, shot_terms, character),
+                }
+            )
+        if asset_ref(character.headshot_image_url):
+            items.append(
+                {
+                    "id": f"character_headshot:{character.id}",
+                    "kind": "character_headshot",
+                    "source_id": character.id,
+                    "name": character.name,
+                    "alias": f"{character.name}-头像",
+                    "mention_key": f"character_headshot:{character.id}",
+                    "image_url": asset_ref(character.headshot_image_url),
+                    "origin": "auto",
+                    "reason": "角色白底头像参考图",
+                }
+            )
+    return items
 
 
 def default_selected_references(candidates: list[dict]) -> list[dict]:
     scenes = [item for item in candidates if item.get("kind") == "scene"]
-    characters = [item for item in candidates if item.get("kind") == "character"]
+    characters = [item for item in candidates if item.get("kind") in CHARACTER_REFERENCE_KINDS]
     return [*scenes[:1], *characters[:2]]
 
 
@@ -76,14 +100,15 @@ def selected_references_from_ids(candidates: list[dict], raw_ids: object) -> lis
                 continue
 
             kind = str(candidate.get("kind"))
-            if kind == "scene" and selected_kinds["scene"] >= 1:
+            lane = "character" if kind in CHARACTER_REFERENCE_KINDS else kind
+            if lane == "scene" and selected_kinds["scene"] >= 1:
                 continue
-            if kind == "character" and selected_kinds["character"] >= 2:
+            if lane == "character" and selected_kinds["character"] >= 2:
                 continue
 
             selected.append(candidate)
-            if kind in selected_kinds:
-                selected_kinds[kind] += 1
+            if lane in selected_kinds:
+                selected_kinds[lane] += 1
     return selected
 
 
@@ -121,7 +146,7 @@ def _scene_reason(
         return "镜头已绑定该场景"
     if _scene_match_score(shot, shot_text, shot_terms, scene) > 0:
         return "镜头文案命中该场景"
-    return "项目候选场景，供模型按镜头内容筛选"
+    return "无人场景参考图，供模型按镜头内容筛选"
 
 
 def _character_reason(shot_text: str, shot_terms: set[str], character: Character) -> str:
