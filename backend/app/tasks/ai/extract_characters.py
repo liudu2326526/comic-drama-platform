@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.domain.models import Character, Job, Project
+from app.domain.models.character import CHARACTER_ROLE_VALUES, CHARACTER_VISUAL_TYPE_VALUES
 from app.infra import get_volcano_client
 from app.infra.db import get_session_factory
 from app.pipeline.transitions import is_job_canceled, update_job_progress
@@ -13,15 +14,33 @@ from app.tasks.celery_app import celery_app
 from app.utils.json_utils import extract_json
 
 logger = logging.getLogger(__name__)
-VALID_ROLE_TYPES = {"supporting", "atmosphere"}
+VALID_ROLE_TYPES = set(CHARACTER_ROLE_VALUES)
+VALID_VISUAL_TYPES = set(CHARACTER_VISUAL_TYPE_VALUES)
+LEGACY_ROLE_ALIASES = {"protagonist": "lead"}
+HUMANOID_VISUAL_TYPES = {"human_actor", "stylized_human", "humanoid_monster"}
 
 
-def _normalize_bool(value: object, *, default: bool = True) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, str):
-        return value.strip().lower() in {"true", "1", "yes", "y", "是", "人形"}
-    return bool(value)
+def _normalize_role_type(value: object) -> str:
+    raw = str(value or "supporting").strip() or "supporting"
+    raw = LEGACY_ROLE_ALIASES.get(raw, raw)
+    return raw if raw in VALID_ROLE_TYPES else "supporting"
+
+
+def _normalize_visual_type(value: object, *, role_type: str) -> str:
+    raw = str(value or "").strip()
+    if raw in VALID_VISUAL_TYPES:
+        return raw
+    if role_type == "crowd":
+        return "crowd_group"
+    if role_type == "system":
+        return "object_entity"
+    if role_type == "atmosphere":
+        return "anomaly_entity"
+    return "human_actor"
+
+
+def _derive_is_humanoid(visual_type: str) -> bool:
+    return visual_type in HUMANOID_VISUAL_TYPES
 
 
 def _normalize_character_rows(payload: object) -> list[dict[str, str | bool | None]]:
@@ -41,18 +60,16 @@ def _normalize_character_rows(payload: object) -> list[dict[str, str | bool | No
         if not name or name in seen_names:
             continue
         seen_names.add(name)
-        role_type = str(item.get("role_type", "supporting")).strip() or "supporting"
-        if role_type == "protagonist":
-            role_type = "supporting"
-        if role_type not in VALID_ROLE_TYPES:
-            role_type = "supporting"
-        is_humanoid = _normalize_bool(item.get("is_humanoid"), default=role_type != "atmosphere")
+        role_type = _normalize_role_type(item.get("role_type"))
+        visual_type = _normalize_visual_type(item.get("visual_type"), role_type=role_type)
+        is_humanoid = _derive_is_humanoid(visual_type)
         summary = item.get("summary")
         description = item.get("description")
         normalized.append(
             {
                 "name": name,
                 "role_type": role_type,
+                "visual_type": visual_type,
                 "is_humanoid": is_humanoid,
                 "summary": str(summary).strip() if summary else None,
                 "description": str(description).strip() if description else None,
@@ -78,6 +95,7 @@ async def _upsert_character(
         session.add(character)
 
     character.role_type = row["role_type"] or "supporting"
+    character.visual_type = row["visual_type"] or "human_actor"
     character.is_humanoid = bool(row.get("is_humanoid", True))
     character.is_protagonist = False
     character.summary = row["summary"]
@@ -139,18 +157,24 @@ async def _run(project_id: str, job_id: str) -> None:
                 return
 
             prompt = (
-                "请根据以下小说内容提取其中的主要角色、关键配角和氛围配角。\n\n"
+                "请根据以下小说内容提取其中的主要角色、关键配角、反派、系统型存在、群体角色和氛围/异常存在。\n\n"
                 f"小说内容：\n{project.story or ''}\n\n"
                 "请以 JSON 数组格式返回，每个对象包含："
-                "name, role_type(protagonist/supporting/atmosphere), is_humanoid(boolean), summary, description。\n"
-                "字段要求：summary 用一句话概括角色在故事中的身份/功能；"
-                "description 必须是角色视觉描述，不要写剧情地点、剧情动作、世界观解释或环境背景。\n"
-                "description 必须按以下格式逐项填写具体值，不能只写字段名或要求。\n"
-                "人形角色格式：年龄段：具体年龄段；性别气质：具体气质；体型轮廓：具体体型；脸部气质：具体脸型/神态；发型发色：具体发型发色；服装层次：具体上装/下装/外套层次；主色/辅色：具体颜色；鞋履/配件：具体鞋履和配件；唯一辨识点：具体且不可与其他角色重复。\n"
-                "人形角色的 description 必须包含以上每一项。"
+                "name, role_type(lead/supporting/antagonist/atmosphere/crowd/system), "
+                "visual_type(human_actor/stylized_human/humanoid_monster/creature/anomaly_entity/object_entity/crowd_group/environment_force), "
+                "is_humanoid(boolean), summary, description。\n"
+                "role_type 只表示剧情功能；visual_type 决定后续如何生成角色形象。"
+                "不得因为角色是反派就把 visual_type 写成怪物，必须依据视觉形态判断。\n"
+                "summary 用一句话概括角色在故事中的身份/功能；description 必须只写视觉设定，不写剧情地点、剧情动作、世界观解释或环境背景。\n"
+                "description 必须按 visual_type 使用以下字段逐项填写具体值，不能只写字段名或要求。\n"
+                "人类/风格化人类字段：年龄段；性别气质；体型轮廓；脸部气质；发型发色；服装层次；主色/辅色；鞋履/配件；唯一辨识点。\n"
+                "类人怪物字段：整体轮廓；头部/面部结构；身体结构；材质质感；主色/辅色；肢体/运动方式；威胁特征；唯一辨识点。\n"
+                "非人生命体字段：整体轮廓；身体结构；材质质感；主色/辅色；运动方式；攻击/交互特征；尺度感；唯一辨识点。\n"
+                "异常体/能量体字段：形态边界；材质/粒子质感；颜色光效；核心符号；变化规律；空间影响；危险感；唯一辨识点。\n"
+                "物体/系统载体字段：主体结构；材质工艺；交互界面；发光区域；状态变化；尺度/摆放方式；唯一辨识点。\n"
+                "群体角色字段：群体构成；整体服装/形态；颜色倾向；数量密度；行动姿态；与场景关系；唯一辨识点。\n"
+                "环境力量字段：空间形态；影响范围；材质/气象质感；颜色光效；动态变化；对环境的破坏方式；唯一辨识点。\n"
                 "每个角色的发型、服装配色、体型、配件和唯一辨识点不得与其他角色重复。\n"
-                "非人形/氛围角色格式：整体轮廓：具体轮廓；材质质感：具体材质；主色/辅色：具体颜色；边缘形态：具体边缘；核心视觉符号：具体符号；尺度感：具体尺度；唯一辨识点：具体且不可与其他角色重复。"
-                "不得套用人类头发、五官、鞋履或站姿。"
             )
             client = get_volcano_client()
             response = await client.chat_completions(

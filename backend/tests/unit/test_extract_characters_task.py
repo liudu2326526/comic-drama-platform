@@ -55,6 +55,57 @@ def test_job_kind_values_contains_extract_characters():
     assert "extract_characters" in JOB_KIND_VALUES
 
 
+def test_character_role_and_visual_type_constants_cover_generation_routes():
+    from app.domain.models.character import CHARACTER_ROLE_VALUES, CHARACTER_VISUAL_TYPE_VALUES
+
+    assert CHARACTER_ROLE_VALUES == [
+        "lead",
+        "supporting",
+        "antagonist",
+        "atmosphere",
+        "crowd",
+        "system",
+    ]
+    assert CHARACTER_VISUAL_TYPE_VALUES == [
+        "human_actor",
+        "stylized_human",
+        "humanoid_monster",
+        "creature",
+        "anomaly_entity",
+        "object_entity",
+        "crowd_group",
+        "environment_force",
+    ]
+
+
+def test_normalize_character_rows_maps_legacy_protagonist_and_visual_type():
+    rows = extract_characters_task._normalize_character_rows({
+        "characters": [
+            {
+                "name": "林川",
+                "role_type": "protagonist",
+                "visual_type": "human_actor",
+                "summary": "主角",
+                "description": "年龄段：25-30岁；性别气质：沉稳男性；体型轮廓：中等偏瘦；脸部气质：轮廓偏方；发型发色：黑色短碎发；服装层次：蓝色夹克；主色/辅色：藏青/浅灰；鞋履/配件：黑色帆布鞋；唯一辨识点：离线智能手机",
+            },
+            {
+                "name": "异常吞噬暗影",
+                "role_type": "antagonist",
+                "visual_type": "anomaly_entity",
+                "summary": "吞噬生命的异常存在",
+                "description": "形态边界：无固定形态；材质/粒子质感：黑雾；颜色光效：黑紫；核心符号：旋涡空洞；变化规律：持续蠕动；空间影响：压暗周围光线；危险感：靠近即吞噬；唯一辨识点：紫色裂纹边缘",
+            },
+        ]
+    })
+
+    assert rows[0]["role_type"] == "lead"
+    assert rows[0]["visual_type"] == "human_actor"
+    assert rows[0]["is_humanoid"] is True
+    assert rows[1]["role_type"] == "antagonist"
+    assert rows[1]["visual_type"] == "anomaly_entity"
+    assert rows[1]["is_humanoid"] is False
+
+
 @pytest.fixture
 def task_session_factory(test_engine, monkeypatch):
     factory = async_sessionmaker(test_engine, expire_on_commit=False)
@@ -103,8 +154,8 @@ async def test_extract_characters_task_creates_next_main_job_and_children(
             return _chat_response(
                 """
                 [
-                  {"name": "林夏", "role_type": "protagonist", "summary": "女主", "description": "敏锐记者"},
-                  {"name": "周沉", "role_type": "supporting", "summary": "男主搭档", "description": "冷静刑警"}
+                  {"name": "林夏", "role_type": "protagonist", "visual_type": "human_actor", "summary": "女主", "description": "敏锐记者"},
+                  {"name": "周沉", "role_type": "supporting", "visual_type": "human_actor", "summary": "男主搭档", "description": "冷静刑警"}
                 ]
                 """
             )
@@ -155,7 +206,8 @@ async def test_extract_characters_task_creates_next_main_job_and_children(
 
     lin_xia = next(item for item in characters if item.name == "林夏")
     assert lin_xia.id == existing_id
-    assert lin_xia.role_type == "supporting"
+    assert lin_xia.role_type == "lead"
+    assert lin_xia.visual_type == "human_actor"
     assert lin_xia.summary == "女主"
     assert lin_xia.description == "敏锐记者"
 
@@ -207,10 +259,14 @@ async def test_extract_characters_prompt_requests_unique_visual_descriptions(
     await extract_characters_task._run(project_id, job.id)
 
     prompt = captured_messages[0]["content"]
-    assert "description 必须是角色视觉描述" in prompt
-    assert "description 必须按以下格式逐项填写具体值" in prompt
-    assert "年龄段：具体年龄段" in prompt
-    assert "唯一辨识点：具体且不可与其他角色重复" in prompt
+    assert "role_type(lead/supporting/antagonist/atmosphere/crowd/system)" in prompt
+    assert "visual_type(human_actor/stylized_human/humanoid_monster/creature/anomaly_entity/object_entity/crowd_group/environment_force)" in prompt
+    assert "description 必须只写视觉设定" in prompt
+    assert "description 必须按 visual_type 使用以下字段逐项填写具体值" in prompt
+    assert "人类/风格化人类字段" in prompt
+    assert "异常体/能量体字段" in prompt
+    assert "群体角色字段" in prompt
+    assert "唯一辨识点" in prompt
     assert "年龄段" in prompt
     assert "体型轮廓" in prompt
     assert "发型发色" in prompt
@@ -218,7 +274,7 @@ async def test_extract_characters_prompt_requests_unique_visual_descriptions(
     assert "主色/辅色" in prompt
     assert "唯一辨识点" in prompt
     assert "不得与其他角色重复" in prompt
-    assert "不要写剧情地点" in prompt
+    assert "不写剧情地点" in prompt
 
 
 @pytest.mark.asyncio

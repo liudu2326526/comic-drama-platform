@@ -5,8 +5,9 @@ from typing import Any
 class CharacterOut(BaseModel):
     id: str
     name: str
-    role: str        # 中文展示值(protagonist→"主角" 等)
+    role: str        # 中文展示值(lead→"主角" 等)
     role_type: str   # 原始 ENUM
+    visual_type: str
     is_protagonist: bool
     locked: bool
     summary: str | None
@@ -28,12 +29,13 @@ class CharacterUpdate(BaseModel):
     description: str | None = None
     meta: dict[str, Any] | None = None
     role_type: str | None = None   # 允许从 supporting → atmosphere 等调整
+    visual_type: str | None = None
 
     @model_validator(mode="before")
     @classmethod
     def _reject_explicit_null(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            for f in ("name", "role_type"):
+            for f in ("name", "role_type", "visual_type"):
                 if f in data and data[f] is None:
                     raise ValueError(f"{f} 不允许显式 null")
         return data

@@ -6,6 +6,7 @@ from app.api.envelope import Envelope
 from app.api.errors import ApiError
 from app.deps import get_db
 from app.domain.models import Character, Job, Project
+from app.domain.models.character import ROLE_CN_LABELS
 from app.domain.schemas.character import (
     CharacterGenerateRequest,
     CharacterOut,
@@ -20,21 +21,25 @@ router = APIRouter(prefix="/projects/{project_id}/characters", tags=["characters
 
 
 def _to_character_out(c: Character) -> CharacterOut:
-    normalized_role = "supporting" if c.role_type == "protagonist" else c.role_type
-    role_cn = {"supporting": "配角", "atmosphere": "氛围"}
     return CharacterOut(
         id=c.id,
         name=c.name,
-        role=role_cn.get(normalized_role, normalized_role),
-        role_type=normalized_role,
-        is_protagonist=False,
-        locked=False,
+        role=ROLE_CN_LABELS.get(c.role_type, c.role_type),
+        role_type=c.role_type,
+        visual_type=c.visual_type,
+        is_protagonist=c.is_protagonist,
+        locked=c.locked,
         summary=c.summary,
         description=c.description,
         meta=[],
         reference_image_url=c.full_body_image_url or c.reference_image_url,
         full_body_image_url=c.full_body_image_url or c.reference_image_url,
         headshot_image_url=c.headshot_image_url,
+        turnaround_image_url=c.turnaround_image_url,
+        is_humanoid=c.is_humanoid,
+        voice_profile=c.voice_profile,
+        voice_reference_audio_url=c.voice_reference_audio_url,
+        voice_asset_id=c.voice_asset_id,
     )
 
 @router.get("", response_model=Envelope[list[CharacterOut]])

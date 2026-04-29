@@ -1,6 +1,7 @@
 /* frontend/src/types/index.ts */
 import type {
   CharacterRoleType,
+  CharacterVisualType,
   CharacterImagePrompts,
   PromptProfileState,
   ProjectStageRaw,
@@ -27,6 +28,7 @@ export interface CharacterAsset {
   name: string;
   role: string; // 中文,aggregate 层已拼
   role_type?: CharacterRoleType; // aggregate M3a 会给;编辑时用
+  visual_type?: CharacterVisualType;
   is_protagonist: boolean; // M3a 新增
   locked: boolean; // M3a 新增
   summary: string | null;

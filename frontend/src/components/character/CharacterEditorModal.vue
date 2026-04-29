@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import Modal from "@/components/common/Modal.vue";
-import type { CharacterRoleType, CharacterUpdate } from "@/types/api";
+import type { CharacterRoleType, CharacterUpdate, CharacterVisualType } from "@/types/api";
 import type { CharacterAsset } from "@/types";
 
 const props = defineProps<{
@@ -16,12 +16,28 @@ const emit = defineEmits<{
 }>();
 
 const ROLE_OPTIONS: { value: CharacterRoleType; label: string }[] = [
+  { value: "lead", label: "主角" },
   { value: "supporting", label: "配角" },
-  { value: "atmosphere", label: "氛围" }
+  { value: "antagonist", label: "反派" },
+  { value: "atmosphere", label: "氛围" },
+  { value: "crowd", label: "群体" },
+  { value: "system", label: "系统" }
+];
+
+const VISUAL_TYPE_OPTIONS: { value: CharacterVisualType; label: string; caption: string }[] = [
+  { value: "human_actor", label: "真人/写实人类", caption: "需要入人像库和真人视频一致性的角色" },
+  { value: "stylized_human", label: "风格化人类", caption: "动漫/插画风格的人类角色" },
+  { value: "humanoid_monster", label: "类人怪物/异变人", caption: "保持人形轮廓但不按真人人像处理" },
+  { value: "creature", label: "非人生命体", caption: "动物、异形、生物怪物等非人角色" },
+  { value: "anomaly_entity", label: "异常体/能量体", caption: "黑雾、裂缝、能量团、不可名状异常" },
+  { value: "object_entity", label: "物体/系统载体", caption: "终端、道具、系统核心、机械装置" },
+  { value: "crowd_group", label: "群体角色", caption: "只生成群体风貌参考图，不生成单体头像和 360 视频" },
+  { value: "environment_force", label: "环境力量/灾难源", caption: "灾害源、空间异常、环境特效类存在" }
 ];
 
 const name = ref("");
 const roleType = ref<CharacterRoleType>("supporting");
+const visualType = ref<CharacterVisualType>("human_actor");
 const summary = ref("");
 const description = ref("");
 const validationError = ref<string | null>(null);
@@ -31,7 +47,8 @@ watch(
   (open) => {
     if (open && props.character) {
       name.value = props.character.name;
-      roleType.value = (props.character.role_type === "protagonist" ? "supporting" : (props.character.role_type ?? "supporting")) as CharacterRoleType;
+      roleType.value = props.character.role_type ?? "supporting";
+      visualType.value = props.character.visual_type ?? "human_actor";
       summary.value = props.character.summary ?? "";
       description.value = props.character.description ?? "";
       validationError.value = null;
@@ -55,6 +72,7 @@ function submit() {
   const payload: CharacterUpdate = {};
   if (trimmedName !== props.character?.name) payload.name = trimmedName;
   if (roleType.value !== props.character?.role_type) payload.role_type = roleType.value;
+  if (visualType.value !== props.character?.visual_type) payload.visual_type = visualType.value;
   
   const trimmedSummary = summary.value.trim() || null;
   if (trimmedSummary !== (props.character?.summary ?? null)) payload.summary = trimmedSummary;
@@ -82,6 +100,14 @@ function submit() {
         <select v-model="roleType">
           <option v-for="opt in ROLE_OPTIONS" :key="opt.value" :value="opt.value">
             {{ opt.label }}
+          </option>
+        </select>
+      </label>
+      <label>
+        <span>视觉类型</span>
+        <select v-model="visualType">
+          <option v-for="opt in VISUAL_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
+            {{ opt.label }} - {{ opt.caption }}
           </option>
         </select>
       </label>

@@ -21,6 +21,17 @@ import {
 import type { CharacterAsset } from "@/types";
 import type { CharacterUpdate, JobState } from "@/types/api";
 
+const CHARACTER_ASSET_LABELS: Record<string, { primary: string; secondary: string | null; motion: string | null }> = {
+  human_actor: { primary: "全身参考图", secondary: "头像参考图", motion: "360 旋转参考视频" },
+  stylized_human: { primary: "风格化全身参考图", secondary: "风格化头像参考图", motion: "360 旋转参考视频" },
+  humanoid_monster: { primary: "类人怪物全身设定图", secondary: "头部/核心局部特写", motion: "360 展示参考视频" },
+  creature: { primary: "生物整体设定图", secondary: "核心器官/纹理特写", motion: "动作参考视频" },
+  anomaly_entity: { primary: "异常体概念设定图", secondary: "核心符号/粒子形态图", motion: "动态特效参考视频" },
+  object_entity: { primary: "物体/终端设定图", secondary: "细节/交互界面图", motion: "状态变化参考视频" },
+  crowd_group: { primary: "群体风貌参考图", secondary: null, motion: null },
+  environment_force: { primary: "环境/灾难源参考图", secondary: "特效/空间异常参考图", motion: "环境特效参考视频" }
+};
+
 const store = useWorkbenchStore();
 const {
   current,
@@ -506,6 +517,10 @@ const selectedRegenSnapshot = computed(() =>
 const selectedRawFullBodyImageUrl = computed(
   () => selectedCharacter.value?.full_body_image_url ?? selectedCharacter.value?.reference_image_url ?? null
 );
+const selectedAssetLabels = computed(() => {
+  const visualType = selectedCharacter.value?.visual_type ?? "human_actor";
+  return CHARACTER_ASSET_LABELS[visualType] ?? CHARACTER_ASSET_LABELS.human_actor;
+});
 function shouldHidePendingAsset(kind: "fullBody" | "headshot" | "turnaround", url: string | null) {
   if (!selectedHasRegenJob.value || !url) return false;
   const snapshot = selectedRegenSnapshot.value;
@@ -544,10 +559,10 @@ const selectedImagePrompts = computed(() => {
   const prompts = selectedCharacter.value?.image_prompts;
   if (!prompts) return [];
   return [
-    { key: "full_body", label: "全身参考图", prompt: prompts.full_body },
-    { key: "headshot", label: "头像参考图", prompt: prompts.headshot },
-    { key: "turnaround", label: "360 旋转参考视频", prompt: prompts.turnaround }
-  ].filter((item): item is { key: string; label: string; prompt: string } => Boolean(item.prompt));
+    { key: "full_body", label: selectedAssetLabels.value.primary, prompt: prompts.full_body },
+    { key: "headshot", label: selectedAssetLabels.value.secondary, prompt: prompts.headshot },
+    { key: "turnaround", label: selectedAssetLabels.value.motion, prompt: prompts.turnaround }
+  ].filter((item): item is { key: string; label: string; prompt: string } => Boolean(item.label && item.prompt));
 });
 </script>
 
@@ -677,23 +692,24 @@ const selectedImagePrompts = computed(() => {
               <img
                 v-if="selectedFullBodyImageUrl"
                 :src="selectedFullBodyImageUrl"
-                alt="全身参考图"
+                :alt="selectedAssetLabels.primary"
                 loading="lazy"
               />
               <div v-else class="asset-image-card__empty">{{ imagePendingLabel }}</div>
-              <figcaption>全身参考图</figcaption>
+              <figcaption>{{ selectedAssetLabels.primary }}</figcaption>
             </figure>
-            <figure class="asset-image-card">
+            <figure v-if="selectedAssetLabels.secondary" class="asset-image-card">
               <img
                 v-if="selectedHeadshotImageUrl"
                 :src="selectedHeadshotImageUrl"
-                alt="头像参考图"
+                :alt="selectedAssetLabels.secondary"
                 loading="lazy"
               />
               <div v-else class="asset-image-card__empty">{{ imagePendingLabel }}</div>
-              <figcaption>头像参考图</figcaption>
+              <figcaption>{{ selectedAssetLabels.secondary }}</figcaption>
             </figure>
             <figure
+              v-if="selectedAssetLabels.motion"
               class="asset-image-card asset-image-card--wide"
               :class="{ 'asset-image-card--video': selectedTurnaroundIsVideo }"
             >
@@ -707,11 +723,11 @@ const selectedImagePrompts = computed(() => {
               <img
                 v-else-if="selectedTurnaroundUrl"
                 :src="selectedTurnaroundUrl"
-                alt="360 旋转设定图"
+                :alt="selectedAssetLabels.motion"
                 loading="lazy"
               />
               <div v-else class="asset-image-card__empty">{{ videoPendingLabel }}</div>
-              <figcaption>360 旋转参考视频</figcaption>
+              <figcaption>{{ selectedAssetLabels.motion }}</figcaption>
             </figure>
           </div>
 

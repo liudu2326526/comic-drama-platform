@@ -25,7 +25,7 @@ async def test_character_style_reference_task_can_run_inside_existing_event_loop
 async def test_character_asset_task_can_run_inside_existing_event_loop(monkeypatch):
     calls: list[tuple[str, str]] = []
 
-    async def fake_run(character_id: str, job_id: str) -> None:
+    async def fake_run(character_id: str, job_id: str, replace_existing: bool = False) -> None:
         calls.append((character_id, job_id))
 
     monkeypatch.setattr(gen_character_asset, "run_character_asset_generation", fake_run)

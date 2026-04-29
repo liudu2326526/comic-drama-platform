@@ -219,6 +219,93 @@ _NON_HUMANOID_VISUAL_LABELS = (
     "唯一辨识点",
 )
 
+_HUMANOID_MONSTER_VISUAL_LABELS = (
+    "整体轮廓",
+    "头部/面部结构",
+    "身体结构",
+    "材质质感",
+    "主色/辅色",
+    "肢体/运动方式",
+    "威胁特征",
+    "唯一辨识点",
+)
+
+_CREATURE_VISUAL_LABELS = (
+    "整体轮廓",
+    "身体结构",
+    "材质质感",
+    "主色/辅色",
+    "运动方式",
+    "攻击/交互特征",
+    "尺度感",
+    "唯一辨识点",
+)
+
+_ANOMALY_VISUAL_LABELS = (
+    "形态边界",
+    "材质/粒子质感",
+    "颜色光效",
+    "核心符号",
+    "变化规律",
+    "空间影响",
+    "危险感",
+    "唯一辨识点",
+)
+
+_OBJECT_VISUAL_LABELS = (
+    "主体结构",
+    "材质工艺",
+    "交互界面",
+    "发光区域",
+    "状态变化",
+    "尺度/摆放方式",
+    "唯一辨识点",
+)
+
+_CROWD_VISUAL_LABELS = (
+    "群体构成",
+    "整体服装/形态",
+    "颜色倾向",
+    "数量密度",
+    "行动姿态",
+    "与场景关系",
+    "唯一辨识点",
+)
+
+_ENVIRONMENT_FORCE_VISUAL_LABELS = (
+    "空间形态",
+    "影响范围",
+    "材质/气象质感",
+    "颜色光效",
+    "动态变化",
+    "对环境的破坏方式",
+    "唯一辨识点",
+)
+
+_VISUAL_LABELS_BY_TYPE = {
+    "human_actor": _HUMANOID_VISUAL_LABELS,
+    "stylized_human": _HUMANOID_VISUAL_LABELS,
+    "humanoid_monster": _HUMANOID_MONSTER_VISUAL_LABELS,
+    "creature": _CREATURE_VISUAL_LABELS,
+    "anomaly_entity": _ANOMALY_VISUAL_LABELS,
+    "object_entity": _OBJECT_VISUAL_LABELS,
+    "crowd_group": _CROWD_VISUAL_LABELS,
+    "environment_force": _ENVIRONMENT_FORCE_VISUAL_LABELS,
+}
+
+_VISUAL_ASSET_LABELS = {
+    "human_actor": ("全身参考图", "头像参考图", "360 度旋转参考视频"),
+    "stylized_human": ("风格化全身参考图", "风格化头像参考图", "360 度旋转参考视频"),
+    "humanoid_monster": ("类人怪物全身设定图", "头部/核心局部特写", "360 展示参考视频"),
+    "creature": ("生物整体设定图", "核心器官/纹理特写", "动作参考视频"),
+    "anomaly_entity": ("异常体概念设定图", "核心符号/粒子形态图", "动态特效参考视频"),
+    "object_entity": ("物体/终端设定图", "细节/交互界面图", "状态变化参考视频"),
+    "crowd_group": ("群体风貌参考图", None, None),
+    "environment_force": ("环境/灾难源参考图", "特效/空间异常参考图", "环境特效参考视频"),
+}
+
+_HUMAN_LIKE_VISUAL_TYPES = {"human_actor", "stylized_human"}
+
 
 _REFERENCE_IMAGE_USAGE_RULE = (
     "参考图使用规则：只参考参考图片的画风和服装质感；"
@@ -260,24 +347,45 @@ def _visual_spec_block(description: str | None, labels: tuple[str, ...]) -> str:
     return "角色视觉设定：\n" + "\n".join(lines)
 
 
+def _character_visual_type(char: Character) -> str:
+    raw_visual_type = getattr(char, "visual_type", None)
+    if raw_visual_type:
+        visual_type = str(raw_visual_type)
+        return visual_type if visual_type in _VISUAL_LABELS_BY_TYPE else "human_actor"
+    if getattr(char, "is_humanoid", True) is False:
+        return "anomaly_entity"
+    return "human_actor"
+
+
+def _visual_labels(char: Character) -> tuple[str, ...]:
+    return _VISUAL_LABELS_BY_TYPE[_character_visual_type(char)]
+
+
+def _asset_labels(char: Character) -> tuple[str, str | None, str | None]:
+    return _VISUAL_ASSET_LABELS[_character_visual_type(char)]
+
+
 def build_character_full_body_prompt(project: Project, char: Character, *, has_reference_image: bool = False) -> str:
     sections: list[str] = []
-    is_humanoid = bool(getattr(char, "is_humanoid", True))
-    if is_humanoid:
-        visual_spec = _visual_spec_block(getattr(char, "description", None), _HUMANOID_VISUAL_LABELS)
+    visual_type = _character_visual_type(char)
+    primary_label, _, _ = _asset_labels(char)
+    visual_spec = _visual_spec_block(getattr(char, "description", None), _visual_labels(char))
+    if visual_type in _HUMAN_LIKE_VISUAL_TYPES:
         visual_requirements = "画面要求：单人，白底或极简浅色背景，正面全身站姿，完整头发到鞋履，服饰层次和轮廓清晰。"
         negative_rules = "禁止项：禁止多人，禁止复杂背景，禁止裁切身体，禁止额外道具抢画面，禁止文字水印，禁止风格漂移。"
+    elif visual_type == "crowd_group":
+        visual_requirements = "画面要求：群体风貌参考图，白底或极简浅色背景，展示群体构成、服装/形态共性、数量密度和行动姿态；不要突出任何单一可入库人脸。"
+        negative_rules = "禁止项：禁止单体头像，禁止人像库风格证件照，禁止复杂背景，禁止文字水印，禁止风格漂移。"
     else:
-        visual_spec = _visual_spec_block(getattr(char, "description", None), _NON_HUMANOID_VISUAL_LABELS)
         visual_requirements = (
-            "画面要求：非人形角色白底单体概念设定图，完整展示整体轮廓、材质质感、边缘形态、核心视觉符号和尺度感；"
-            "构图干净，主体清晰，不套用人类正面站姿。"
+            "画面要求：非人形单体概念设定图，白底概念设定图，完整展示主体轮廓、材质质感、结构语言、核心视觉符号和尺度感；"
+            "构图干净，主体清晰，不套用人类头像或站姿模板。"
         )
         negative_rules = (
             "禁止项：禁止多人，禁止复杂背景，禁止人类头发/五官/鞋履模板，禁止额外道具抢画面，禁止文字水印，禁止风格漂移。"
         )
     sections.append(
-        f"用途：生成角色白底全身参考图/角色设定参考图，用于后续分镜与视频生成的一致性锁定。\n"
+        f"用途：生成{primary_label}，用于后续分镜与视频生成的一致性锁定。\n"
         f"角色名称：{char.name}\n"
         f"角色简介：{char.summary or ''}\n"
         f"{visual_spec}\n"
@@ -289,18 +397,20 @@ def build_character_full_body_prompt(project: Project, char: Character, *, has_r
     return "\n\n".join(sections)
 
 
-def build_character_headshot_prompt(project: Project, char: Character, *, has_reference_image: bool = False) -> str:
+def build_character_headshot_prompt(project: Project, char: Character, *, has_reference_image: bool = False) -> str | None:
+    visual_type = _character_visual_type(char)
+    _, secondary_label, _ = _asset_labels(char)
+    if secondary_label is None:
+        return None
     sections: list[str] = []
-    is_humanoid = bool(getattr(char, "is_humanoid", True))
-    if is_humanoid:
-        visual_spec = _visual_spec_block(getattr(char, "description", None), _HUMANOID_VISUAL_LABELS)
-        purpose = "用途：生成当前角色白底头像参考图，必须与当前角色全身参考图保持同一人物身份、发型、脸型与服装质感。"
+    visual_spec = _visual_spec_block(getattr(char, "description", None), _visual_labels(char))
+    if visual_type in _HUMAN_LIKE_VISUAL_TYPES:
+        purpose = f"用途：生成当前角色白底{secondary_label}，必须与当前角色全身参考图保持同一人物身份、发型、脸型与服装质感。"
         visual_requirements = "画面要求：单人，白底或极简浅色背景，胸像或肩部以上头像，面部清晰，五官稳定。"
         negative_rules = "禁止项：禁止多人，禁止遮挡面部，禁止夸张表情漂移，禁止文字水印，禁止风格漂移。"
     else:
-        visual_spec = _visual_spec_block(getattr(char, "description", None), _NON_HUMANOID_VISUAL_LABELS)
-        purpose = "用途：生成当前非人形角色白底核心局部特写参考图，必须与全身概念设定图保持同一材质、轮廓语言和核心视觉符号。"
-        visual_requirements = "画面要求：白底核心局部特写，突出材质纹理、边缘形态、发光/纹理/结构符号；主体清晰，不做真人头像。"
+        purpose = f"用途：生成当前角色白底{secondary_label}，必须与主参考图保持同一材质、轮廓语言和核心视觉符号。"
+        visual_requirements = "画面要求：白底核心局部特写或细节特写，突出材质纹理、边缘形态、发光/纹理/结构符号；主体清晰，不做真人头像。"
         negative_rules = "禁止项：禁止多人，禁止复杂背景，禁止人类五官模板，禁止文字水印，禁止风格漂移。"
     sections.append(
         f"{purpose}\n"
@@ -321,20 +431,34 @@ def build_character_turnaround_prompt(
     *,
     character_names: list[str] | None = None,
     has_reference_image: bool = False,
-) -> str:
+) -> str | None:
+    visual_type = _character_visual_type(char)
+    _, _, motion_label = _asset_labels(char)
+    if motion_label is None:
+        return None
     sections: list[str] = []
-    sections.append(
-        "用途：生成当前人物 360 度旋转参考视频,用于后续视频中保持人物全身造型一致。\n"
-        "@图1（全身参考图）作为首帧约束,@图2（头像参考图）作为尾帧约束。\n"
-        "主体始终是同一个人物,保持 @图1（全身参考图）中的服装、身材比例、发型、发色、五官气质一致,保持 @图2（头像参考图）中的脸部身份一致。\n"
-        "背景为白色或极简干净棚拍背景,不添加复杂环境,不添加第二个人物。\n"
-        "0-2s：画面从 @图1（全身参考图）开始,主体正面站立在画面中央,镜头固定中全身构图。主体看向镜头,用平稳、自然、清晰的语调开始说：“你好,我是角色形象参考”。\n"
-        "2-6s：主体以身体中轴为中心,原地缓慢完成一次 360 度转身展示。转身过程必须清楚出现正面、右侧面、背面、左侧面，再回到正面。镜头保持稳定跟随,不做推拉摇移,不改变背景。身体比例稳定,服装稳定,发型稳定。\n"
-        "6-7s：主体回到正面后,抬起一只手向镜头轻轻挥手 1-2 次,动作自然克制,手部不变形,身体站姿稳定。台词继续保持平稳语调,口型与“你好,我是角色形象参考”同步。\n"
-        "7-8s：镜头从全身构图平稳推进到脸部近景,最终停在 @图2（头像参考图）的头像构图,脸部清晰稳定,表情自然。\n"
-        "画质、风格与约束：9:16 竖屏,720p,8 秒,生成声音。画面清晰,角色身份一致,五官稳定,服装稳定,发型稳定,口型同步,动作顺滑。\n"
-        "禁止多人,禁止换脸,禁止换衣服,禁止复杂背景,禁止文字水印,禁止肢体扭曲,禁止手指畸形,禁止只做镜头推近而不展示完整 360 度转身。"
-    )
+    if visual_type in _HUMAN_LIKE_VISUAL_TYPES:
+        sections.append(
+            f"用途：生成当前人物 {motion_label},用于后续视频中保持人物全身造型一致。\n"
+            "@图1（全身参考图）作为首帧约束,@图2（头像参考图）作为尾帧约束。\n"
+            "主体始终是同一个人物,保持 @图1（全身参考图）中的服装、身材比例、发型、发色、五官气质一致,保持 @图2（头像参考图）中的脸部身份一致。\n"
+            "背景为白色或极简干净棚拍背景,不添加复杂环境,不添加第二个人物。\n"
+            "0-2s：画面从 @图1（全身参考图）开始,主体正面站立在画面中央,镜头固定中全身构图。主体看向镜头,用平稳、自然、清晰的语调开始说：“你好,我是角色形象参考”。\n"
+            "2-6s：主体以身体中轴为中心,原地缓慢完成一次 360 度转身展示。转身过程必须清楚出现正面、右侧面、背面、左侧面，再回到正面。镜头保持稳定跟随,不做推拉摇移,不改变背景。身体比例稳定,服装稳定,发型稳定。\n"
+            "6-7s：主体回到正面后,抬起一只手向镜头轻轻挥手 1-2 次,动作自然克制,手部不变形,身体站姿稳定。台词继续保持平稳语调,口型与“你好,我是角色形象参考”同步。\n"
+            "7-8s：镜头从全身构图平稳推进到脸部近景,最终停在 @图2（头像参考图）的头像构图,脸部清晰稳定,表情自然。\n"
+            "画质、风格与约束：9:16 竖屏,720p,8 秒,生成声音。画面清晰,角色身份一致,五官稳定,服装稳定,发型稳定,口型同步,动作顺滑。\n"
+            "禁止多人,禁止换脸,禁止换衣服,禁止复杂背景,禁止文字水印,禁止肢体扭曲,禁止手指畸形,禁止只做镜头推近而不展示完整 360 度转身。"
+        )
+    else:
+        visual_spec = _visual_spec_block(getattr(char, "description", None), _visual_labels(char))
+        sections.append(
+            f"用途：生成{motion_label},用于后续视频中保持非人物角色、物体、异常体或环境力量的动态表现一致。\n"
+            "@图1（主参考图）与 @图2（细节参考图）只作为外观、材质、颜色和核心符号参考。\n"
+            f"{visual_spec}\n"
+            "画面要求：9:16 竖屏,720p,8 秒,白底或极简背景,主体清晰,动态展示其材质变化、形态变化、运动方式或特效状态。\n"
+            "禁止项：禁止加入人类台词或发声表现,禁止生成真人头像,禁止复杂背景,禁止多人,禁止文字水印,禁止风格漂移。"
+        )
     return "\n\n".join(sections)
 
 

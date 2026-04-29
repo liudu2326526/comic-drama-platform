@@ -135,18 +135,28 @@ class MockVolcanoClient(VolcanoClient):
                 "characters": [
                     {
                         "name": "秦昭",
-                        "role_type": "protagonist",
+                        "role_type": "lead",
+                        "visual_type": "human_actor",
                         "is_humanoid": True,
                         "summary": "少年天子",
-                        "description": "十五六岁清瘦少年男性,眉眼稚气但神情倔强,黑色束发,深青窄袖常服外罩短披风,银灰腰带,黑布靴,袖口有细金线作为唯一辨识点。"
+                        "description": "年龄段：十五六岁；性别气质：少年男性；体型轮廓：清瘦；脸部气质：眉眼稚气但神情倔强；发型发色：黑色束发；服装层次：深青窄袖常服外罩短披风；主色/辅色：深青/银灰；鞋履/配件：黑布靴、银灰腰带；唯一辨识点：袖口细金线。"
                     },
                     {
                         "name": "江离",
                         "role_type": "supporting",
+                        "visual_type": "human_actor",
                         "is_humanoid": True,
                         "summary": "摄政王",
-                        "description": "三十岁上下高挑男性,肩背挺直,冷峻长脸,乌发整齐束冠,玄黑长袍叠深紫外衫,玉白腰佩,硬底长靴,左肩暗纹披帛作为唯一辨识点。"
-                    }
+                        "description": "年龄段：三十岁上下；性别气质：冷峻男性；体型轮廓：高挑肩背挺直；脸部气质：长脸、神情克制；发型发色：乌发整齐束冠；服装层次：玄黑长袍叠深紫外衫；主色/辅色：玄黑/深紫；鞋履/配件：硬底长靴、玉白腰佩；唯一辨识点：左肩暗纹披帛。"
+                    },
+                    {
+                        "name": "裂隙黑潮",
+                        "role_type": "antagonist",
+                        "visual_type": "anomaly_entity",
+                        "is_humanoid": False,
+                        "summary": "从天空裂缝溢出的异常体",
+                        "description": "形态边界：无固定边缘；材质/粒子质感：黑色烟雾和细碎颗粒；颜色光效：黑紫主光、暗红裂纹；核心符号：中心旋涡空洞；变化规律：持续收缩扩张；空间影响：压暗周围光线；危险感：靠近即吞噬；唯一辨识点：边缘反复闪烁紫红裂纹。"
+                    },
                 ]
             }
             resp_str = json.dumps(content)

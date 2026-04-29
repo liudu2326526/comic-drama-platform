@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import logging
 
 from app.domain.models import Character, Project
+from app.domain.models.character import CHARACTER_ROLE_VALUES, CHARACTER_VISUAL_TYPE_VALUES
 from app.domain.schemas.character import CharacterUpdate
 from app.pipeline.transitions import assert_asset_editable
 from app.infra import get_volcano_asset_client
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class CharacterService:
+    PORTRAIT_LIBRARY_VISUAL_TYPES = {"human_actor", "stylized_human"}
     REGISTER_ASSET_ALLOWED_STAGES = {
         ProjectStageRaw.STORYBOARD_READY.value,
         ProjectStageRaw.CHARACTERS_LOCKED.value,
@@ -46,10 +48,19 @@ class CharacterService:
         
         data = update_data.model_dump(exclude_unset=True)
         if "role_type" in data and data["role_type"] == "protagonist":
-            data["role_type"] = "supporting"
+            data["role_type"] = "lead"
+        if "role_type" in data and data["role_type"] not in CHARACTER_ROLE_VALUES:
+            raise ValueError("invalid role_type")
+        if "visual_type" in data and data["visual_type"] not in CHARACTER_VISUAL_TYPE_VALUES:
+            raise ValueError("invalid visual_type")
+        if data.get("visual_type") in {"creature", "anomaly_entity", "object_entity", "crowd_group", "environment_force"}:
+            data["is_humanoid"] = False
+        elif data.get("visual_type") in {"human_actor", "stylized_human", "humanoid_monster"}:
+            data["is_humanoid"] = True
         for key, value in data.items():
             setattr(character, key, value)
-        character.is_protagonist = False
+        if "role_type" in data and character.role_type != "lead":
+            character.is_protagonist = False
         
         return character
 
@@ -72,6 +83,8 @@ class CharacterService:
                 "register_character_asset",
                 "当前阶段不允许执行入人像库",
             )
+        if character.visual_type not in CharacterService.PORTRAIT_LIBRARY_VISUAL_TYPES:
+            raise ApiError(40301, "当前角色类型不支持入人像库", http_status=403)
 
         stmt = select(Job).where(
             Job.project_id == project.id,

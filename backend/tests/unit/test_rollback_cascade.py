@@ -25,7 +25,7 @@ async def _seed(db_session, stage: str = "rendering") -> Project:
             current_render_id=new_id(),
         ))
     db_session.add(Character(
-        id=new_id(), project_id=p.id, name="A", role_type="protagonist",
+        id=new_id(), project_id=p.id, name="A", role_type="lead",
         is_protagonist=True, locked=True,
     ))
     db_session.add(Scene(
@@ -42,8 +42,8 @@ async def test_rollback_clears_storyboard_bindings(db_session):
     await db_session.flush()
 
     assert counts.shots_reset == 3
-    assert counts.characters_unlocked == 1
-    assert counts.scenes_unlocked == 1
+    assert counts.characters_unlocked == 0
+    assert counts.scenes_unlocked == 0
 
     shots = (await db_session.execute(
         select(StoryboardShot).where(StoryboardShot.project_id == p.id)
@@ -55,7 +55,12 @@ async def test_rollback_clears_storyboard_bindings(db_session):
     chars = (await db_session.execute(
         select(Character).where(Character.project_id == p.id)
     )).scalars().all()
-    assert all(not c.locked for c in chars)
+    assert all(c.locked for c in chars)
+
+    scenes = (await db_session.execute(
+        select(Scene).where(Scene.project_id == p.id)
+    )).scalars().all()
+    assert all(s.locked for s in scenes)
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.domain.models import Character, Project
+from app.domain.schemas.character import CharacterUpdate
 from app.domain.services.character_service import CharacterService
 
 
@@ -100,3 +101,50 @@ async def test_register_asset_steps_persists_active_status(test_engine, monkeypa
 
         assert character.video_style_ref["asset_status"] == "Active"
     assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_update_preserves_locked_lead_protagonist_when_patching_summary() -> None:
+    project = Project(name="Demo", story="story", stage="storyboard_ready", genre="现代", ratio="9:16")
+    character = Character(
+        project_id="P1",
+        name="林川",
+        role_type="lead",
+        is_protagonist=True,
+        summary="旧简介",
+        description="旧描述",
+    )
+
+    updated = await CharacterService.update(
+        _SessionStub(),
+        project,
+        character,
+        CharacterUpdate(summary="新简介"),
+    )
+
+    assert updated.summary == "新简介"
+    assert updated.role_type == "lead"
+    assert updated.is_protagonist is True
+
+
+@pytest.mark.asyncio
+async def test_update_clears_protagonist_only_when_role_moves_away_from_lead() -> None:
+    project = Project(name="Demo", story="story", stage="storyboard_ready", genre="现代", ratio="9:16")
+    character = Character(
+        project_id="P1",
+        name="林川",
+        role_type="lead",
+        is_protagonist=True,
+        summary="旧简介",
+        description="旧描述",
+    )
+
+    updated = await CharacterService.update(
+        _SessionStub(),
+        project,
+        character,
+        CharacterUpdate(role_type="supporting"),
+    )
+
+    assert updated.role_type == "supporting"
+    assert updated.is_protagonist is False

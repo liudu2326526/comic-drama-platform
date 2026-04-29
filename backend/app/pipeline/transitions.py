@@ -94,7 +94,7 @@ async def lock_protagonist(session: AsyncSession, project: Project, character: C
     for r in rows:
         if r.id == character.id:
             r.is_protagonist = True
-            r.role_type = "protagonist"
+            r.role_type = "lead"
             r.locked = True
             found = True
         else:
@@ -106,7 +106,7 @@ async def lock_protagonist(session: AsyncSession, project: Project, character: C
         # 如果 character 不在 rows 里, 说明传入的 character 对象有问题
         # 兜底处理
         character.is_protagonist = True
-        character.role_type = "protagonist"
+        character.role_type = "lead"
         character.locked = True
                 # 注意:旧主角如果已经是 locked=True,这里保持 locked=True 还是 False? 
                 # 按照 spec,降级为 supporting,locked 状态可以保留也可以由用户后续手动解锁
@@ -222,7 +222,14 @@ async def update_job_progress(
     """唯一允许写 jobs.status/progress/done/total 的函数。"""
     from app.domain.models import Job
 
-    job = await session.get(Job, job_id, populate_existing=True)
+    job = (
+        await session.execute(
+            select(Job)
+            .where(Job.id == job_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
     if job is None:
         raise InvalidTransition("unknown_job", job_id, "job 不存在")
     if job.status == "canceled" and status is None:

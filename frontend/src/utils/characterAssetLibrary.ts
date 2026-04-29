@@ -2,6 +2,12 @@ import type { CharacterAsset } from "@/types";
 
 export type CharacterAssetLibraryState = "idle" | "pending" | "active";
 
+const PORTRAIT_LIBRARY_VISUAL_TYPES = new Set(["human_actor", "stylized_human"]);
+
+function supportsPortraitLibrary(character: CharacterAsset): boolean {
+  return PORTRAIT_LIBRARY_VISUAL_TYPES.has(character.visual_type ?? "human_actor");
+}
+
 function getAssetStatusTag(character: CharacterAsset): string | null {
   const tag = character.meta.find((item) => item.startsWith("人像库:"));
   if (!tag) return null;
@@ -10,7 +16,8 @@ function getAssetStatusTag(character: CharacterAsset): string | null {
 
 export function getCharacterAssetLibraryState(
   character: CharacterAsset
-): CharacterAssetLibraryState {
+): CharacterAssetLibraryState | "unsupported" {
+  if (!supportsPortraitLibrary(character)) return "unsupported";
   const status = getAssetStatusTag(character);
   if (status === "Pending") return "pending";
   if (status === "Active") return "active";
@@ -34,6 +41,9 @@ export function getCharacterAssetLibraryAction(character: CharacterAsset): {
   }
   if (state === "active") {
     return { label: "已入人像库", disabled: true };
+  }
+  if (state === "unsupported") {
+    return { label: "不支持入库", disabled: true };
   }
   return { label: "入人像库", disabled: false };
 }

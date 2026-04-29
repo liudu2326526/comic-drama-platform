@@ -4,7 +4,34 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.domain.models.base import Base, TimestampMixin
 from app.infra.ulid import new_id
 
-CHARACTER_ROLE_VALUES = ["protagonist", "supporting", "atmosphere"]
+CHARACTER_ROLE_VALUES = [
+    "lead",
+    "supporting",
+    "antagonist",
+    "atmosphere",
+    "crowd",
+    "system",
+]
+
+ROLE_CN_LABELS = {
+    "lead": "主角",
+    "supporting": "配角",
+    "antagonist": "反派",
+    "atmosphere": "氛围",
+    "crowd": "群体",
+    "system": "系统",
+}
+
+CHARACTER_VISUAL_TYPE_VALUES = [
+    "human_actor",
+    "stylized_human",
+    "humanoid_monster",
+    "creature",
+    "anomaly_entity",
+    "object_entity",
+    "crowd_group",
+    "environment_force",
+]
 
 
 class Character(Base, TimestampMixin):
@@ -20,6 +47,11 @@ class Character(Base, TimestampMixin):
         Enum(*CHARACTER_ROLE_VALUES, name="character_role_type"),
         nullable=False,
         default="supporting",
+    )
+    visual_type: Mapped[str] = mapped_column(
+        Enum(*CHARACTER_VISUAL_TYPE_VALUES, name="character_visual_type"),
+        nullable=False,
+        default="human_actor",
     )
     is_protagonist: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     summary: Mapped[str | None] = mapped_column(String(255), nullable=True)

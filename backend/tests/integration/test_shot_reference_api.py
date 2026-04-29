@@ -30,7 +30,7 @@ async def test_reference_candidates_include_auto_and_history(client, db_session)
         id="C1",
         project_id=project.id,
         name="秦昭",
-        role_type="protagonist",
+        role_type="lead",
         reference_image_url="https://img.example/char.png",
     )
     db_session.add_all([shot, scene, character])

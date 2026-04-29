@@ -86,6 +86,119 @@ async def test_character_asset_generation_writes_full_body_and_headshot(db_sessi
 
 
 @pytest.mark.asyncio
+async def test_crowd_group_generates_only_primary_reference(db_session, monkeypatch):
+    project = Project(name="末世", story="story", ratio="9:16", stage="storyboard_ready")
+    db_session.add(project)
+    await db_session.flush()
+    character = Character(
+        project_id=project.id,
+        name="普通民众",
+        role_type="crowd",
+        visual_type="crowd_group",
+        is_humanoid=False,
+        summary="城区普通居民群体",
+        description="群体构成：不同年龄居民；整体服装/形态：日常服装；颜色倾向：灰蓝；数量密度：中等；行动姿态：惊慌后退；与场景关系：街道群体；唯一辨识点：应急手环",
+    )
+    db_session.add(character)
+    await db_session.flush()
+    job = Job(project_id=project.id, kind="gen_character_asset_single", status="queued", target_type="character", target_id=character.id)
+    db_session.add(job)
+    await db_session.commit()
+    image_calls: list[dict] = []
+    video_calls: list[dict] = []
+
+    class FakeImageClient:
+        async def image_generations(self, model, prompt, **kwargs):
+            image_calls.append({"prompt": prompt, **kwargs})
+            return {"data": [{"url": "https://volcano.example/crowd.png"}]}
+
+    class FakeVideoClient:
+        async def video_generations_create(self, **kwargs):
+            video_calls.append(kwargs)
+            return {"id": "unexpected"}
+
+    async def fake_persist_generated_asset(*, url, project_id, kind, ext="png"):
+        return f"projects/{project_id}/{kind}/crowd.{ext}"
+
+    task_module = import_module("app.tasks.ai.gen_character_asset")
+    monkeypatch.setattr(task_module, "get_character_image_client", lambda: FakeImageClient())
+    monkeypatch.setattr(task_module, "get_volcano_client", lambda: FakeVideoClient())
+    monkeypatch.setattr(task_module, "persist_generated_asset", fake_persist_generated_asset)
+
+    await run_character_asset_generation(character.id, job.id, session=db_session)
+
+    await db_session.refresh(character)
+    await db_session.refresh(job)
+    assert job.status == "succeeded"
+    assert job.total == 1
+    assert job.done == 1
+    assert len(image_calls) == 1
+    assert video_calls == []
+    assert character.full_body_image_url is not None
+    assert character.headshot_image_url is None
+    assert character.turnaround_image_url is None
+
+
+@pytest.mark.asyncio
+async def test_anomaly_entity_generates_primary_secondary_and_motion_reference(db_session, monkeypatch):
+    project = Project(name="末世", story="story", ratio="9:16", stage="storyboard_ready")
+    db_session.add(project)
+    await db_session.flush()
+    character = Character(
+        project_id=project.id,
+        name="异常吞噬暗影",
+        role_type="antagonist",
+        visual_type="anomaly_entity",
+        is_humanoid=False,
+        summary="吞噬生命的异常存在",
+        description="形态边界：无固定形态；材质/粒子质感：黑雾；颜色光效：黑紫；核心符号：旋涡空洞；变化规律：持续蠕动；空间影响：压暗周围光线；危险感：靠近即吞噬；唯一辨识点：紫色裂纹边缘",
+    )
+    db_session.add(character)
+    await db_session.flush()
+    job = Job(project_id=project.id, kind="gen_character_asset_single", status="queued", target_type="character", target_id=character.id)
+    db_session.add(job)
+    await db_session.commit()
+    image_calls: list[dict] = []
+    video_calls: list[dict] = []
+
+    class FakeImageClient:
+        async def image_generations(self, model, prompt, **kwargs):
+            image_calls.append({"prompt": prompt, **kwargs})
+            return {"data": [{"url": f"https://volcano.example/anomaly-{len(image_calls)}.png"}]}
+
+    class FakeVideoClient:
+        async def video_generations_create(self, **kwargs):
+            video_calls.append(kwargs)
+            return {"id": "video-task-1"}
+
+        async def video_generations_get(self, task_id):
+            return {"id": task_id, "status": "succeeded", "content": {"video_url": "https://volcano.example/anomaly.mp4"}}
+
+    async def fake_persist_generated_asset(*, url, project_id, kind, ext="png"):
+        return f"projects/{project_id}/{kind}/{url.rsplit('/', 1)[-1]}.{ext}"
+
+    task_module = import_module("app.tasks.ai.gen_character_asset")
+    monkeypatch.setattr(task_module, "get_character_image_client", lambda: FakeImageClient())
+    monkeypatch.setattr(task_module, "get_volcano_client", lambda: FakeVideoClient())
+    monkeypatch.setattr(task_module, "persist_generated_asset", fake_persist_generated_asset)
+
+    await run_character_asset_generation(character.id, job.id, session=db_session)
+
+    await db_session.refresh(character)
+    await db_session.refresh(job)
+    assert job.status == "succeeded"
+    assert job.total == 3
+    assert job.done == 3
+    assert len(image_calls) == 2
+    assert len(video_calls) == 1
+    assert "动态特效参考视频" in video_calls[0]["prompt"]
+    assert video_calls[0]["image_inputs"][0]["role"] == "reference_image"
+    assert character.full_body_image_url is not None
+    assert character.headshot_image_url is not None
+    assert character.turnaround_image_url is not None
+
+
+@pytest.mark.asyncio
 async def test_character_turnaround_video_retries_with_asset_library_after_privacy_failure(
     db_session,
     monkeypatch,

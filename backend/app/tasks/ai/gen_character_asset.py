@@ -23,6 +23,28 @@ from app.tasks.ai.prompt_builders import (
 
 logger = logging.getLogger(__name__)
 
+SECONDARY_REFERENCE_VISUAL_TYPES = {
+    "human_actor",
+    "stylized_human",
+    "humanoid_monster",
+    "creature",
+    "anomaly_entity",
+    "object_entity",
+    "environment_force",
+}
+MOTION_REFERENCE_VISUAL_TYPES = {
+    "human_actor",
+    "stylized_human",
+    "humanoid_monster",
+    "creature",
+    "anomaly_entity",
+    "object_entity",
+    "environment_force",
+}
+PORTRAIT_LIBRARY_FALLBACK_VISUAL_TYPES = {"human_actor"}
+VOICE_PLACEHOLDER_VISUAL_TYPES = {"human_actor"}
+HUMAN_FRAME_VIDEO_VISUAL_TYPES = {"human_actor", "stylized_human"}
+
 
 def _extract_image_url(resp: Any) -> str:
     if isinstance(resp, dict):
@@ -40,6 +62,19 @@ def _extract_video_url(resp: dict[str, Any]) -> str:
 
 def _is_human_character(char: Character) -> bool:
     return bool(char.is_humanoid)
+
+
+def _visual_type(char: Character) -> str:
+    return str(getattr(char, "visual_type", None) or "human_actor")
+
+
+def _expected_asset_steps(visual_type: str, *, secondary_prompt: str | None, motion_prompt: str | None) -> int:
+    total = 1
+    if visual_type in SECONDARY_REFERENCE_VISUAL_TYPES and secondary_prompt:
+        total += 1
+    if visual_type in MOTION_REFERENCE_VISUAL_TYPES and motion_prompt:
+        total += 1
+    return total
 
 
 def _asset_uri_from_video_style_ref(video_style_ref: object) -> str | None:
@@ -130,7 +165,7 @@ async def _generate_turnaround_video(
             )
         if status in {"failed", "expired", "cancelled", "canceled"}:
             _raise_provider_terminal_error(provider, status)
-        await update_job_progress(session, job_id, done=min(80 + attempt, 95), total=100, status="running")
+        await update_job_progress(session, job_id, progress=min(80 + attempt, 95), status="running")
         await session.commit()
         await asyncio.sleep(5)
 
@@ -296,11 +331,41 @@ async def _run_character_asset_generation(
         image_model = get_character_image_model()
         style_ref = build_asset_url(project.character_style_reference_image_url)
         style_refs = [style_ref] if style_ref else None
+        visual_type = _visual_type(char)
+        full_body_prompt = build_character_full_body_prompt(project, char, has_reference_image=bool(style_refs))
+        secondary_prompt = build_character_headshot_prompt(project, char, has_reference_image=True)
+        motion_prompt = build_character_turnaround_prompt(
+            project,
+            char,
+            character_names=character_names,
+            has_reference_image=True,
+        )
+        expected_steps = _expected_asset_steps(
+            visual_type,
+            secondary_prompt=secondary_prompt,
+            motion_prompt=motion_prompt,
+        )
+        completed_steps = 0
+        await update_job_progress(session, job_id, status="running", total=expected_steps, done=0, progress=0)
+        await session.commit()
+
+        async def mark_step_done() -> None:
+            nonlocal completed_steps
+            completed_steps += 1
+            await update_job_progress(
+                session,
+                job_id,
+                done=completed_steps,
+                total=expected_steps,
+                progress=int(completed_steps / expected_steps * 100),
+                status="running",
+            )
+            await session.commit()
 
         if replace_existing or not char.full_body_image_url:
             full_body_resp = await client.image_generations(
                 model=image_model,
-                prompt=build_character_full_body_prompt(project, char, has_reference_image=bool(style_refs)),
+                prompt=full_body_prompt,
                 references=style_refs,
                 n=1,
                 size="1024x1024",
@@ -319,59 +384,61 @@ async def _run_character_asset_generation(
             full_body_key = char.full_body_image_url
             char.reference_image_url = char.reference_image_url or full_body_key
 
-        await update_job_progress(session, job_id, progress=55)
-        await session.commit()
+        await mark_step_done()
 
         if await is_job_canceled(session, job_id):
             return
         full_body_url = build_asset_url(full_body_key) if full_body_key else None
         headshot_refs = [url for url in [full_body_url] if url]
-        headshot_resp = await client.image_generations(
-            model=image_model,
-            prompt=build_character_headshot_prompt(project, char, has_reference_image=bool(headshot_refs)),
-            references=headshot_refs or None,
-            n=1,
-            size="1024x1024",
-        )
-        if await is_job_canceled(session, job_id):
-            return
-        headshot_key = await persist_generated_asset(
-            url=_extract_image_url(headshot_resp),
-            project_id=char.project_id,
-            kind="character_headshot",
-            ext="png",
-        )
-        char.headshot_image_url = headshot_key
+        if visual_type in SECONDARY_REFERENCE_VISUAL_TYPES and secondary_prompt:
+            headshot_resp = await client.image_generations(
+                model=image_model,
+                prompt=secondary_prompt,
+                references=headshot_refs or None,
+                n=1,
+                size="1024x1024",
+            )
+            if await is_job_canceled(session, job_id):
+                return
+            headshot_key = await persist_generated_asset(
+                url=_extract_image_url(headshot_resp),
+                project_id=char.project_id,
+                kind="character_headshot",
+                ext="png",
+            )
+            char.headshot_image_url = headshot_key
+            await mark_step_done()
+        else:
+            headshot_key = None
+            char.headshot_image_url = None
 
-        if _is_human_character(char):
-            await update_job_progress(session, job_id, progress=80)
-            await session.commit()
+        if visual_type in MOTION_REFERENCE_VISUAL_TYPES and motion_prompt:
             if await is_job_canceled(session, job_id):
                 return
             full_body_url = build_asset_url(char.full_body_image_url)
             headshot_url = build_asset_url(char.headshot_image_url)
             if not full_body_url or not headshot_url:
-                raise RuntimeError("生成 360 参考视频需要先完成全身参考图和头像参考图")
-            turnaround_prompt = build_character_turnaround_prompt(
-                project,
-                char,
-                character_names=character_names,
-                has_reference_image=True,
-            )
-            public_image_inputs = [
-                {"role": "first_frame", "url": full_body_url},
-                {"role": "last_frame", "url": headshot_url},
-            ]
+                raise RuntimeError("生成动态参考视频需要先完成主参考图和细节参考图")
+            if visual_type in HUMAN_FRAME_VIDEO_VISUAL_TYPES:
+                public_image_inputs = [
+                    {"role": "first_frame", "url": full_body_url},
+                    {"role": "last_frame", "url": headshot_url},
+                ]
+            else:
+                public_image_inputs = [
+                    {"role": "reference_image", "url": full_body_url},
+                    {"role": "reference_image", "url": headshot_url},
+                ]
             try:
                 turnaround_key = await _generate_turnaround_video(
                     project=project,
-                    prompt=turnaround_prompt,
+                    prompt=motion_prompt,
                     image_inputs=public_image_inputs,
                     job_id=job_id,
                     session=session,
                 )
             except Exception as exc:
-                if not _is_reference_privacy_failure(exc):
+                if visual_type not in PORTRAIT_LIBRARY_FALLBACK_VISUAL_TYPES or not _is_reference_privacy_failure(exc):
                     raise
                 logger.info(
                     "Retry character turnaround video with asset library reference after provider rejection: %s",
@@ -384,7 +451,7 @@ async def _run_character_asset_generation(
                     return
                 turnaround_key = await _generate_turnaround_video(
                     project=project,
-                    prompt=turnaround_prompt,
+                    prompt=motion_prompt,
                     image_inputs=[
                         {"role": "first_frame", "url": full_body_asset_uri},
                         {"role": "last_frame", "url": headshot_asset_uri},
@@ -397,6 +464,11 @@ async def _run_character_asset_generation(
             if not turnaround_key:
                 return
             char.turnaround_image_url = turnaround_key
+            await mark_step_done()
+        else:
+            char.turnaround_image_url = None
+
+        if visual_type in VOICE_PLACEHOLDER_VISUAL_TYPES and not char.voice_profile:
             char.voice_profile = {
                 "enabled": True,
                 "description": f"{char.name} 的角色声音待配置",
@@ -404,7 +476,7 @@ async def _run_character_asset_generation(
             }
 
         await session.commit()
-        await update_job_progress(session, job_id, status="succeeded", progress=100)
+        await update_job_progress(session, job_id, status="succeeded", done=expected_steps, total=expected_steps, progress=100)
         await session.commit()
         await _update_parent_progress(session, job_id)
         await session.commit()

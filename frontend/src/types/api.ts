@@ -351,13 +351,24 @@ export interface ProjectParseResponse {
 }
 
 // ---- M3a: characters / scenes / bind_scene ----
-export type CharacterRoleType = "protagonist" | "supporting" | "atmosphere";
+export type CharacterRoleType = "lead" | "supporting" | "antagonist" | "atmosphere" | "crowd" | "system";
+
+export type CharacterVisualType =
+  | "human_actor"
+  | "stylized_human"
+  | "humanoid_monster"
+  | "creature"
+  | "anomaly_entity"
+  | "object_entity"
+  | "crowd_group"
+  | "environment_force";
 
 export interface CharacterOut {
   id: string;
   name: string;
   role: string; // 中文展示值 "主角"/"配角"/"氛围",与后端 role_map 一致
   role_type: CharacterRoleType; // 原始 ENUM,编辑弹窗下拉用
+  visual_type: CharacterVisualType;
   is_protagonist: boolean;
   locked: boolean;
   summary: string | null;
@@ -386,6 +397,7 @@ export interface CharacterUpdate {
   description?: string | null;
   meta?: Record<string, unknown> | null;
   role_type?: CharacterRoleType; // 不允许显式 null
+  visual_type?: CharacterVisualType; // 不允许显式 null
 }
 
 export interface CharacterGenerateRequest {

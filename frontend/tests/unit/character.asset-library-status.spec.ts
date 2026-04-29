@@ -7,7 +7,7 @@ import {
   getCharacterAssetLibraryState
 } from "@/utils/characterAssetLibrary";
 
-function makeCharacter(meta: string[]): CharacterAsset {
+function makeCharacter(meta: string[], visualType: CharacterAsset["visual_type"] = "human_actor"): CharacterAsset {
   return {
     id: "C1",
     name: "萧景珩",
@@ -17,7 +17,8 @@ function makeCharacter(meta: string[]): CharacterAsset {
     summary: "",
     description: "",
     meta,
-    reference_image_url: null
+    reference_image_url: null,
+    visual_type: visualType
   };
 }
 
@@ -52,6 +53,17 @@ describe("character asset library status", () => {
     expect(getCharacterAssetLibraryAction(character)).toEqual({
       label: "入人像库",
       disabled: false
+    });
+  });
+
+  it("disables register action for visual types that cannot enter portrait library", () => {
+    const character = makeCharacter(["核心反派"], "anomaly_entity");
+
+    expect(getCharacterAssetLibraryState(character)).toBe("unsupported");
+    expect(getCharacterAssetLibraryBadge(character)).toBeNull();
+    expect(getCharacterAssetLibraryAction(character)).toEqual({
+      label: "不支持入库",
+      disabled: true
     });
   });
 });

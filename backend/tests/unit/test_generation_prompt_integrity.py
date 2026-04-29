@@ -180,6 +180,51 @@ def test_character_image_prompt_omits_reference_rule_without_reference_image():
     assert "参考图使用规则" not in prompt
 
 
+def test_anomaly_entity_prompts_do_not_use_human_fields():
+    project = SimpleNamespace(character_prompt_profile_applied=None)
+    char = SimpleNamespace(
+        name="异常吞噬暗影",
+        role_type="antagonist",
+        visual_type="anomaly_entity",
+        is_humanoid=False,
+        summary="吞噬生命的异常存在",
+        description="形态边界：无固定形态；材质/粒子质感：黑雾；颜色光效：黑紫；核心符号：旋涡空洞；变化规律：持续蠕动；空间影响：压暗周围光线；危险感：靠近即吞噬；唯一辨识点：紫色裂纹边缘",
+    )
+
+    primary = build_character_full_body_prompt(project, char)
+    secondary = build_character_headshot_prompt(project, char)
+    motion = build_character_turnaround_prompt(project, char)
+
+    assert "异常体概念设定图" in primary
+    assert "核心符号/粒子形态图" in secondary
+    assert "动态特效参考视频" in motion
+    assert "年龄段" not in primary
+    assert "鞋履/配件" not in primary
+    assert "头像参考图" not in secondary
+    assert "你好,我是角色形象参考" not in motion
+    assert "口型同步" not in motion
+
+
+def test_crowd_group_prompts_skip_secondary_and_motion():
+    project = SimpleNamespace(character_prompt_profile_applied=None)
+    char = SimpleNamespace(
+        name="普通民众",
+        role_type="crowd",
+        visual_type="crowd_group",
+        is_humanoid=False,
+        summary="城区普通居民群体",
+        description="群体构成：不同年龄居民；整体服装/形态：日常服装；颜色倾向：灰蓝；数量密度：中等；行动姿态：惊慌后退；与场景关系：街道群体；唯一辨识点：应急手环",
+    )
+
+    primary = build_character_full_body_prompt(project, char)
+    secondary = build_character_headshot_prompt(project, char)
+    motion = build_character_turnaround_prompt(project, char)
+
+    assert "群体风貌参考图" in primary
+    assert secondary is None
+    assert motion is None
+
+
 def test_character_turnaround_prompt_requires_full_body_rotation_sheet():
     project = SimpleNamespace(character_prompt_profile_applied={"prompt": "现代末世写实漫剧风格"})
     char = SimpleNamespace(name="林川", summary="普通程序员", description="现代通勤休闲装")

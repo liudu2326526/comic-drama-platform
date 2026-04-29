@@ -3,6 +3,7 @@ from typing import cast
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.models import Project, StoryboardShot, Job, ExportTask, Character, Scene, ShotRender, ShotVideoRender
+from app.domain.models.character import ROLE_CN_LABELS
 from app.domain.schemas.project import ProjectDetail
 from app.domain.schemas.prompt_profile import derive_prompt_profile_state
 from app.domain.schemas.style_reference import StyleReferenceState, StyleReferenceStatus
@@ -128,9 +129,6 @@ class AggregateService:
         done_shots = sum(1 for s in storyboards if s.status in ["succeeded", "locked"])
         progress_text = f"{done_shots} / {total_shots} 已完成" if total_shots > 0 else "0 / 0 已完成"
         
-        # 角色 role 中文映射
-        role_map = {"supporting": "配角", "atmosphere": "氛围"}
-
         def _meta_to_tags(meta: dict | None, video_style_ref: dict | None) -> list[str]:
             tags: list[str] = []
             if isinstance(meta, dict):
@@ -198,12 +196,13 @@ class AggregateService:
                 "updated_at": s.updated_at,
             } for s in storyboards],
             characters=[{
-                "role_type": "supporting" if c.role_type == "protagonist" else c.role_type,
+                "role_type": c.role_type,
+                "visual_type": c.visual_type,
                 "id": c.id,
                 "name": c.name,
-                "role": role_map.get("supporting" if c.role_type == "protagonist" else c.role_type, "配角"),
-                "is_protagonist": False,
-                "locked": False,
+                "role": ROLE_CN_LABELS.get(c.role_type, "配角"),
+                "is_protagonist": c.is_protagonist,
+                "locked": c.locked,
                 "summary": c.summary,
                 "description": c.description,
                 "meta": _meta_to_tags(c.meta, c.video_style_ref),
@@ -232,8 +231,6 @@ class AggregateService:
                         character_names=character_names,
                         has_reference_image=bool(c.full_body_image_url),
                     )
-                    if c.is_humanoid
-                    else None,
                 },
             } for c in chars],
             scenes=[{
