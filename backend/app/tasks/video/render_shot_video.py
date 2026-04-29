@@ -16,6 +16,7 @@ from app.infra.volcano_errors import (
     humanize_volcano_error_message,
 )
 from app.pipeline.transitions import (
+    is_job_canceled,
     mark_shot_video_failed,
     mark_shot_video_running,
     mark_shot_video_succeeded,
@@ -88,6 +89,8 @@ async def _resolve_reference_for_provider(
 async def _render_shot_video_task(shot_id: str, video_render_id: str, job_id: str) -> None:
     session_factory = get_session_factory()
     async with session_factory() as session:
+        if await is_job_canceled(session, job_id):
+            return
         video = await session.get(ShotVideoRender, video_render_id)
         shot = await session.get(StoryboardShot, shot_id)
         if video is None or shot is None or video.shot_id != shot.id:
@@ -147,6 +150,7 @@ async def _render_shot_video_task(shot_id: str, video_render_id: str, job_id: st
                 resolution=str(params.get("resolution", settings.ark_video_default_resolution)),
                 ratio=str(params.get("ratio", "adaptive")),
                 generate_audio=bool(params.get("generate_audio", settings.ark_video_generate_audio)),
+                reference_audio_url=params.get("reference_audio_url"),
                 watermark=bool(params.get("watermark", settings.ark_video_watermark)),
                 return_last_frame=bool(params.get("return_last_frame", settings.ark_video_return_last_frame)),
                 execution_expires_after=int(params.get("execution_expires_after", settings.ark_video_execution_expires_after)),
@@ -154,12 +158,26 @@ async def _render_shot_video_task(shot_id: str, video_render_id: str, job_id: st
             video.provider_task_id = provider_task["id"]
             video.provider_status = "queued"
             await session.commit()
+            if await is_job_canceled(session, job_id):
+                try:
+                    provider = await client.video_generations_delete(video.provider_task_id)
+                    video.provider_status = (
+                        provider.get("status")
+                        if isinstance(provider, dict) and provider.get("status")
+                        else "cancelled"
+                    )
+                    await session.commit()
+                except Exception:
+                    logger.exception("failed to cancel provider task after local job cancel")
+                return
 
             deadline = monotonic() + settings.ark_video_execution_expires_after
             attempt = 0
             provider = None
             while monotonic() < deadline:
                 attempt += 1
+                if await is_job_canceled(session, job_id):
+                    return
                 provider = await client.video_generations_get(video.provider_task_id)
                 video.provider_status = provider.get("status")
                 if provider.get("status") == "succeeded":
@@ -174,6 +192,8 @@ async def _render_shot_video_task(shot_id: str, video_render_id: str, job_id: st
                 raise RuntimeError("video provider returned no status")
 
             if provider.get("status") == "succeeded":
+                if await is_job_canceled(session, job_id):
+                    return
                 content = provider.get("content") or {}
                 video_object_key = await persist_generated_asset(
                     url=content["video_url"],
@@ -217,11 +237,17 @@ async def _render_shot_video_task(shot_id: str, video_render_id: str, job_id: st
             await update_job_progress(session, job_id, status="failed", error_msg="video generation timed out")
             await session.commit()
         except VolcanoError as exc:
+            if await is_job_canceled(session, job_id):
+                await session.rollback()
+                return
             msg = humanize_volcano_error_message(str(exc))
             mark_shot_video_failed(shot, video, error_code=_volcano_error_code(exc), error_msg=msg)
             await update_job_progress(session, job_id, status="failed", error_msg=msg)
             await session.commit()
         except Exception as exc:
+            if await is_job_canceled(session, job_id):
+                await session.rollback()
+                return
             logger.exception("render_shot_video failed")
             mark_shot_video_failed(shot, video, error_code="internal_error", error_msg=str(exc))
             await update_job_progress(session, job_id, status="failed", error_msg=str(exc))

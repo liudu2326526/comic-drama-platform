@@ -45,6 +45,9 @@ const sceneStyleReference = computed(() => ({
   status: current.value?.sceneStyleReference?.status ?? ("empty" as const),
   error: sceneStyleReferenceError.value ?? current.value?.sceneStyleReference?.error ?? null
 }));
+const canGenerateSceneStyleReference = computed(
+  () => flags.value.canEditScenes && scenePromptProfile.value.status === "applied"
+);
 
 function warnSceneStageGate(message: string) {
   toast.warning(message, {
@@ -69,6 +72,10 @@ const { job: promptProfileJob } = useJobPolling(activeScenePromptProfileJobId, {
       (err instanceof ApiError ? messageFor(err.code, err.message) : "生成失败");
     store.markPromptProfileJobFailed("scene", msg);
     toast.error(msg);
+  },
+  onCanceled: (j) => {
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
@@ -97,6 +104,10 @@ useJobPolling(activeSceneStyleReferenceJobId, {
       (err instanceof ApiError ? messageFor(err.code, err.message) : "生成失败");
     store.markStyleReferenceJobFailed("scene", msg);
     toast.error(msg);
+  },
+  onCanceled: (j) => {
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
@@ -118,6 +129,10 @@ const { job: generateJob } = useJobPolling(activeGenerateScenesJobId, {
       (err instanceof ApiError ? messageFor(err.code, err.message) : "生成失败");
     store.markGenerateScenesFailed(msg);
     toast.error(msg);
+  },
+  onCanceled: (j) => {
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
@@ -151,6 +166,10 @@ useJobPolling(activeSceneRegenJobId, {
       store.markRegenByKeyFailed(`scene:${selectedSceneId.value}`);
     }
     toast.error(j?.error_msg ?? (err instanceof ApiError ? messageFor(err.code, err.message) : "重生成失败"));
+  },
+  onCanceled: (j) => {
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
@@ -184,9 +203,23 @@ async function handleGeneratePromptProfile() {
   }
 }
 
+async function handleCancelJob(jobId: string | null) {
+  if (!jobId) return;
+  try {
+    await store.cancelJob(jobId);
+    toast.info("已请求取消，等待当前步骤结束");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "取消失败");
+  }
+}
+
 async function handleGenerateStyleReference() {
   if (!flags.value.canEditScenes) {
     warnSceneStageGate("当前阶段不能生成场景风格母版");
+    return;
+  }
+  if (scenePromptProfile.value.status !== "applied") {
+    toast.warning("请先确认场景统一视觉设定后再生成场景参考图");
     return;
   }
   try {
@@ -382,19 +415,22 @@ const selectedRegenProgress = computed(() =>
         @restore="handleRestorePromptProfile"
         @confirm="handleConfirmPromptProfile"
         @skip="handleSkipPromptProfile"
+        @cancel-generate="handleCancelJob(activeScenePromptProfileJobId)"
       />
       <StyleReferenceCard
         kind="scene"
         :state="sceneStyleReference"
-        :disabled="!flags.canEditScenes"
+        :disabled="!canGenerateSceneStyleReference"
         :running="!!activeSceneStyleReferenceJobId"
         @generate="handleGenerateStyleReference"
+        @cancel-generate="handleCancelJob(activeSceneStyleReferenceJobId)"
       />
     </div>
 
     <div v-if="activeGenerateScenesJobId" class="gen-banner running">
       <div class="gen-head">
         <strong>{{ generateProgressLabel }}</strong>
+        <button class="ghost-btn small" type="button" @click="handleCancelJob(activeGenerateScenesJobId)">取消生成</button>
       </div>
       <ProgressBar :value="generateJob?.progress ?? 0" />
     </div>

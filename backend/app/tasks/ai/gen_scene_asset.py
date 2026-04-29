@@ -4,7 +4,7 @@ from app.infra.asset_store import build_asset_url, persist_generated_asset
 from app.infra.db import get_session_factory
 from app.infra.volcano_client import get_volcano_client
 from app.domain.models import Job, Project, Scene
-from app.pipeline.transitions import update_job_progress
+from app.pipeline.transitions import is_job_canceled, update_job_progress
 from app.tasks.async_runner import run_async_task
 from app.tasks.celery_app import celery_app
 from app.config import get_settings
@@ -64,6 +64,8 @@ async def run_scene_asset_generation(scene_id: str, job_id: str, *, session=None
 
 async def _run_scene_asset_generation(session, scene_id: str, job_id: str) -> None:
     try:
+        if await is_job_canceled(session, job_id):
+            return
         await update_job_progress(session, job_id, status="running", progress=10)
         await session.commit()
 
@@ -94,6 +96,8 @@ async def _run_scene_asset_generation(session, scene_id: str, job_id: str) -> No
             n=1,
             size="1344x768",
         )
+        if await is_job_canceled(session, job_id):
+            return
         await update_job_progress(session, job_id, progress=55)
         await session.commit()
 
@@ -109,6 +113,9 @@ async def _run_scene_asset_generation(session, scene_id: str, job_id: str) -> No
         await session.commit()
         logger.info("Scene %s asset generated and persisted: %s", scene_id, object_key)
     except Exception as e:
+        if await is_job_canceled(session, job_id):
+            await session.rollback()
+            return
         logger.exception("Error in gen_scene_asset_task: %s", e)
         await update_job_progress(session, job_id, status="failed", error_msg=str(e))
         await _update_parent_progress(session, job_id, failure_msg=str(e))

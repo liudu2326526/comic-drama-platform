@@ -47,6 +47,10 @@ class VolcanoClient(ABC):
     async def video_generations_get(self, task_id: str) -> Any:
         pass
 
+    @abstractmethod
+    async def video_generations_delete(self, task_id: str) -> Any:
+        pass
+
 
 class _ChatResponse:
     """兼容 mock 和 openai SDK 的响应结构。"""
@@ -119,6 +123,7 @@ class MockVolcanoClient(VolcanoClient):
                 "parsed_stats": ["角色: 3", "场景: 2", "预计时长: 60s"],
                 "overview": "故事发生在遥远的未来,人类与 AI 共存...",
                 "suggested_shots": 12,
+                "genre": "科幻冒险",
             }
             resp_str = json.dumps(content)
             print(f"\n[AI Chat Output] Model: {model}\nContent: {resp_str}\n")
@@ -131,14 +136,16 @@ class MockVolcanoClient(VolcanoClient):
                     {
                         "name": "秦昭",
                         "role_type": "protagonist",
+                        "is_humanoid": True,
                         "summary": "少年天子",
-                        "description": "心怀大志的少年皇帝。"
+                        "description": "十五六岁清瘦少年男性,眉眼稚气但神情倔强,黑色束发,深青窄袖常服外罩短披风,银灰腰带,黑布靴,袖口有细金线作为唯一辨识点。"
                     },
                     {
                         "name": "江离",
                         "role_type": "supporting",
+                        "is_humanoid": True,
                         "summary": "摄政王",
-                        "description": "权倾朝野的摄政王。"
+                        "description": "三十岁上下高挑男性,肩背挺直,冷峻长脸,乌发整齐束冠,玄黑长袍叠深紫外衫,玉白腰佩,硬底长靴,左肩暗纹披帛作为唯一辨识点。"
                     }
                 ]
             }
@@ -278,6 +285,10 @@ class MockVolcanoClient(VolcanoClient):
             },
         }
 
+    async def video_generations_delete(self, task_id: str) -> Any:
+        logger.info("Mock Volcano Video Delete")
+        return {"id": task_id, "status": "cancelled"}
+
 
 class RealVolcanoClient(VolcanoClient):
     """
@@ -376,18 +387,32 @@ class RealVolcanoClient(VolcanoClient):
         *,
         model: str,
         prompt: str,
-        references: list[str],
         duration: int | None,
         resolution: str,
         ratio: str,
+        references: list[str] | None = None,
+        image_inputs: list[dict[str, str]] | None = None,
         generate_audio: bool = False,
+        reference_audio_url: str | None = None,
         watermark: bool = False,
         return_last_frame: bool = True,
         execution_expires_after: int = 3600,
     ) -> dict:
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-        for url in references:
+        for item in image_inputs or []:
+            content.append({
+                "type": "image_url",
+                "role": item["role"],
+                "image_url": {"url": item["url"]},
+            })
+        for url in references or []:
             content.append({"type": "image_url", "role": "reference_image", "image_url": {"url": url}})
+        if reference_audio_url:
+            content.append({
+                "type": "audio_url",
+                "role": "reference_audio",
+                "audio_url": {"url": reference_audio_url},
+            })
         body = {
             "model": model,
             "content": content,
@@ -404,6 +429,9 @@ class RealVolcanoClient(VolcanoClient):
 
     async def video_generations_get(self, task_id: str) -> dict:
         return await self._request_with_retry("GET", f"/contents/generations/tasks/{task_id}", None)
+
+    async def video_generations_delete(self, task_id: str) -> dict:
+        return await self._request_with_retry("DELETE", f"/contents/generations/tasks/{task_id}", None)
 
 
 def get_volcano_client() -> VolcanoClient:

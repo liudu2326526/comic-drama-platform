@@ -11,6 +11,7 @@ const props = defineProps<{
 
 defineEmits<{
   generate: [];
+  cancelGenerate: [];
 }>();
 
 const title = computed(() =>
@@ -40,6 +41,9 @@ const actionLabel = computed(() => {
       </div>
       <button type="button" :disabled="disabled || running" @click="$emit('generate')">
         {{ actionLabel }}
+      </button>
+      <button v-if="running" type="button" @click="$emit('cancelGenerate')">
+        取消生成
       </button>
     </header>
 

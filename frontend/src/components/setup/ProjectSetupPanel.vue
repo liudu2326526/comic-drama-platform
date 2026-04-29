@@ -40,6 +40,10 @@ const { job: parseJob } = useJobPolling(activeParseJobId, {
       j?.error_msg ?? (err instanceof ApiError ? messageFor(err.code, err.message) : "解析失败");
     store.markParseFailed(msg);
     toast.error(msg);
+  },
+  onCanceled: (j) => {
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
@@ -58,6 +62,10 @@ const { job: genJob } = useJobPolling(activeGenStoryboardJobId, {
     const msg = j?.error_msg ?? "生成分镜失败";
     store.markGenStoryboardFailed(msg);
     toast.error(msg);
+  },
+  onCanceled: (j) => {
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
@@ -85,6 +93,16 @@ const progressLabel = computed(() => {
   if (j.total && j.total > 0) return `${prefix}… ${j.done}/${j.total}`;
   return `${prefix}… ${j.progress}%`;
 });
+
+async function handleCancelActiveJob() {
+  if (!activeJobId.value) return;
+  try {
+    await store.cancelJob(activeJobId.value);
+    toast.info("已请求取消，等待当前步骤结束");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "取消失败");
+  }
+}
 </script>
 
 <template>
@@ -100,6 +118,7 @@ const progressLabel = computed(() => {
       <div class="parse-banner-head">
         <strong>{{ progressLabel }}</strong>
         <span v-if="activeJob?.kind">job: {{ activeJob.kind }}</span>
+        <button class="ghost-btn small" type="button" @click="handleCancelActiveJob">取消生成</button>
       </div>
       <ProgressBar :value="activeJob?.progress ?? 0" />
     </div>

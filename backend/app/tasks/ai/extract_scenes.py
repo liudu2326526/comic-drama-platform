@@ -4,7 +4,7 @@ from app.infra.db import get_session_factory
 from app.infra import get_volcano_client
 from app.config import get_settings
 from app.domain.models import Project, Scene, Job
-from app.pipeline.transitions import update_job_progress
+from app.pipeline.transitions import is_job_canceled, update_job_progress
 from app.tasks.ai.gen_scene_asset import gen_scene_asset
 from app.tasks.async_runner import dispatch_task_group, run_async_task
 from app.utils.json_utils import extract_json
@@ -24,6 +24,8 @@ async def _run(job_id: str, project_id: str) -> None:
     settings = get_settings()
     
     async with session_factory() as session:
+        if await is_job_canceled(session, job_id):
+            return
         # 1. 获取项目信息
         project = await session.get(Project, project_id)
         if not project:
@@ -43,6 +45,8 @@ async def _run(job_id: str, project_id: str) -> None:
                 model=settings.ark_chat_model,
                 messages=[{"role": "user", "content": prompt}]
             )
+            if await is_job_canceled(session, job_id):
+                return
             content = chat_result.choices[0].message.content
             data = extract_json(content)
             
@@ -58,6 +62,9 @@ async def _run(job_id: str, project_id: str) -> None:
                 await session.commit()
                 return
         except Exception as e:
+            if await is_job_canceled(session, job_id):
+                await session.rollback()
+                return
             logger.exception(f"Extract scenes failed: {e}")
             await update_job_progress(session, job_id, status="failed", error_msg=str(e))
             await session.commit()
@@ -96,6 +103,8 @@ async def _run(job_id: str, project_id: str) -> None:
 
         # 4. 只有在事务提交后才分发任务, 避免子任务找不到 Job 行
         try:
+            if await is_job_canceled(session, job_id):
+                return
             await dispatch_task_group(gen_scene_asset, sub_tasks)
         except Exception as exc:
             error_msg = f"dispatch failed: {exc}"

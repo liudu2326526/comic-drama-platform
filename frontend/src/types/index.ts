@@ -1,6 +1,7 @@
 /* frontend/src/types/index.ts */
 import type {
   CharacterRoleType,
+  CharacterImagePrompts,
   PromptProfileState,
   ProjectStageRaw,
   ProjectStageZh,
@@ -34,6 +35,12 @@ export interface CharacterAsset {
   reference_image_url?: string | null; // M3a 新增
   full_body_image_url?: string | null;
   headshot_image_url?: string | null;
+  turnaround_image_url?: string | null;
+  is_humanoid?: boolean;
+  voice_profile?: { description?: string; enabled?: boolean; source?: string } | null;
+  voice_reference_audio_url?: string | null;
+  voice_asset_id?: string | null;
+  image_prompts?: CharacterImagePrompts | null;
 }
 
 export interface SceneAsset {
@@ -75,6 +82,8 @@ export interface VideoGenerationDraft {
   duration: ShotVideoDurationPreset | null;
   resolution: ShotVideoResolution;
   modelType: ShotVideoModelType;
+  generateAudio: boolean;
+  referenceAudioUrl: string | null;
 }
 
 export interface RenderShotItem {

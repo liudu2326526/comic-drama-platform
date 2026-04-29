@@ -15,6 +15,11 @@ class CharacterOut(BaseModel):
     reference_image_url: str | None   # 前端直接展示的 URL(aggregate 层用 OBS_PUBLIC_BASE_URL 拼)
     full_body_image_url: str | None = None
     headshot_image_url: str | None = None
+    turnaround_image_url: str | None = None
+    is_humanoid: bool = True
+    voice_profile: dict[str, Any] | None = None
+    voice_reference_audio_url: str | None = None
+    voice_asset_id: str | None = None
 
 
 class CharacterUpdate(BaseModel):

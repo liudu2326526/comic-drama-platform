@@ -42,3 +42,11 @@ async def test_project_detail_returns_style_reference_and_dual_character_images(
     assert saved_character["reference_image_url"].endswith("/characters/full.png")
     assert saved_character["full_body_image_url"].endswith("/characters/full.png")
     assert saved_character["headshot_image_url"].endswith("/characters/head.png")
+    assert saved_character["image_prompts"]["full_body"]
+    assert "角色名称：秦昭" in saved_character["image_prompts"]["full_body"]
+    assert "角色视觉设定" in saved_character["image_prompts"]["full_body"]
+    assert "参考图使用规则：只参考参考图片的画风和服装质感" in saved_character["image_prompts"]["full_body"]
+    assert "头像参考图" in saved_character["image_prompts"]["headshot"]
+    assert "参考图使用规则：只参考参考图片的画风和服装质感" in saved_character["image_prompts"]["headshot"]
+    assert "人物 360 度旋转参考视频" in saved_character["image_prompts"]["turnaround"]
+    assert "角色名称：秦昭" not in saved_character["image_prompts"]["turnaround"]

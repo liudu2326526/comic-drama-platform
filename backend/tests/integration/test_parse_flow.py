@@ -13,7 +13,6 @@ async def test_full_parse_flow_eager(client: AsyncClient, db_session: AsyncSessi
     resp = await client.post("/api/v1/projects", json={
         "name": "测试项目",
         "story": "很久很久以前,有一个勇敢的小骑士...",
-        "genre": "奇幻",
         "ratio": "16:9"
     })
     assert resp.status_code == 200

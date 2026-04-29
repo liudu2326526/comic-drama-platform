@@ -43,6 +43,24 @@ const editorOpen = ref(false);
 const rollbackOpen = ref(false);
 const busy = ref(false);
 const starting = ref(false);
+const regenStartingAssets = ref<Record<string, {
+  fullBody: string | null;
+  headshot: string | null;
+  turnaround: string | null;
+}>>({});
+let lastGenerationReloadAt = 0;
+let generationReloadPromise: Promise<void> | null = null;
+
+function reloadDuringGeneration() {
+  const now = Date.now();
+  if (generationReloadPromise || now - lastGenerationReloadAt < 2500) return;
+  lastGenerationReloadAt = now;
+  generationReloadPromise = store.reload()
+    .catch(() => void 0)
+    .finally(() => {
+      generationReloadPromise = null;
+    });
+}
 
 const characterPromptProfile = computed(
   () => current.value?.characterPromptProfile ?? { draft: null, applied: null, status: "empty" as const }
@@ -77,6 +95,10 @@ const { job: promptProfileJob } = useJobPolling(activeCharacterPromptProfileJobI
       (err instanceof ApiError ? messageFor(err.code, err.message) : "生成失败");
     store.markPromptProfileJobFailed("character", msg);
     toast.error(msg);
+  },
+  onCanceled: (j) => {
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
@@ -105,12 +127,16 @@ useJobPolling(activeCharacterStyleReferenceJobId, {
       (err instanceof ApiError ? messageFor(err.code, err.message) : "生成失败");
     store.markStyleReferenceJobFailed("character", msg);
     toast.error(msg);
+  },
+  onCanceled: (j) => {
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
 // ---- 生成主 job 轮询(空态入口) ----
 const { job: generateJob } = useJobPolling(activeGenerateCharactersJobId, {
-  onProgress: () => void 0,
+  onProgress: () => reloadDuringGeneration(),
   onSuccess: async (job) => {
     const nextJobId = job.result?.next_job_id;
     if (job.kind === "extract_characters" && nextJobId) {
@@ -133,6 +159,10 @@ const { job: generateJob } = useJobPolling(activeGenerateCharactersJobId, {
     const msg = `${prefix}: ${detail}`;
     store.markGenerateCharactersFailed(msg);
     toast.error(msg);
+  },
+  onCanceled: (j) => {
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
@@ -162,6 +192,10 @@ const { job: registerAssetJob } = useJobPolling(activeRegisterCharacterAssetJobI
       (err instanceof ApiError ? messageFor(err.code, err.message) : "入库失败");
     store.markRegisterCharacterAssetFailed(msg);
     toast.error(msg);
+  },
+  onCanceled: (j) => {
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
@@ -187,10 +221,12 @@ const regenProgressByJobId = ref<Record<string, number>>({});
 useJobPolling(activeCharacterRegenJobId, {
   onProgress: (job: JobState) => {
     regenProgressByJobId.value[job.id] = job.progress;
+    reloadDuringGeneration();
   },
   onSuccess: async () => {
     if (selectedCharacterId.value) {
       store.markRegenByKeySucceeded(`character:${selectedCharacterId.value}`);
+      delete regenStartingAssets.value[selectedCharacterId.value];
     }
     await store.reload();
     toast.success("角色参考图已重生成");
@@ -198,11 +234,19 @@ useJobPolling(activeCharacterRegenJobId, {
   onError: (j, err) => {
     if (selectedCharacterId.value) {
       store.markRegenByKeyFailed(`character:${selectedCharacterId.value}`);
+      delete regenStartingAssets.value[selectedCharacterId.value];
     }
     const msg =
       j?.error_msg ??
       (err instanceof ApiError ? messageFor(err.code, err.message) : "重生成失败");
     toast.error(msg);
+  },
+  onCanceled: (j) => {
+    if (selectedCharacterId.value) {
+      delete regenStartingAssets.value[selectedCharacterId.value];
+    }
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
@@ -233,6 +277,16 @@ async function handleGeneratePromptProfile() {
     await store.generatePromptProfile("character");
   } catch (e) {
     toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "触发失败");
+  }
+}
+
+async function handleCancelJob(jobId: string | null) {
+  if (!jobId) return;
+  try {
+    await store.cancelJob(jobId);
+    toast.info("已请求取消，等待当前步骤结束");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "取消失败");
   }
 }
 
@@ -346,7 +400,8 @@ async function handleEditSubmit(payload: CharacterUpdate) {
 }
 
 async function handleRegen() {
-  if (!selectedCharacter.value) return;
+  const character = selectedCharacter.value;
+  if (!character) return;
   if (!flags.value.canEditCharacters) {
     toast.warning("当前阶段不允许编辑角色,如需修改请回退阶段", {
       action: { label: "回退阶段", onClick: () => (rollbackOpen.value = true) }
@@ -355,9 +410,15 @@ async function handleRegen() {
   }
   busy.value = true;
   try {
-    await store.regenerateCharacter(selectedCharacter.value.id);
+    regenStartingAssets.value[character.id] = {
+      fullBody: character.full_body_image_url ?? character.reference_image_url ?? null,
+      headshot: character.headshot_image_url ?? null,
+      turnaround: character.turnaround_image_url ?? null
+    };
+    await store.regenerateCharacter(character.id);
     toast.info("已触发重生成");
   } catch (e) {
+    delete regenStartingAssets.value[character.id];
     toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "触发失败");
   } finally {
     busy.value = false;
@@ -439,9 +500,55 @@ const selectedHasRegenJob = computed(() => !!selectedRegenJobId.value);
 const selectedRegenProgress = computed(() =>
   selectedRegenJobId.value ? regenProgressByJobId.value[selectedRegenJobId.value] ?? 0 : 0
 );
-const selectedFullBodyImageUrl = computed(
+const selectedRegenSnapshot = computed(() =>
+  selectedCharacter.value ? regenStartingAssets.value[selectedCharacter.value.id] ?? null : null
+);
+const selectedRawFullBodyImageUrl = computed(
   () => selectedCharacter.value?.full_body_image_url ?? selectedCharacter.value?.reference_image_url ?? null
 );
+function shouldHidePendingAsset(kind: "fullBody" | "headshot" | "turnaround", url: string | null) {
+  if (!selectedHasRegenJob.value || !url) return false;
+  const snapshot = selectedRegenSnapshot.value;
+  if (snapshot) return snapshot[kind] === url;
+  const progress = selectedRegenProgress.value;
+  if (kind === "fullBody") return progress < 55;
+  if (kind === "headshot") return progress < 80;
+  return true;
+}
+const selectedFullBodyImageUrl = computed(() => {
+  const url = selectedRawFullBodyImageUrl.value;
+  if (shouldHidePendingAsset("fullBody", url)) return null;
+  return url;
+});
+const selectedHeadshotImageUrl = computed(() => {
+  const url = selectedCharacter.value?.headshot_image_url ?? null;
+  if (shouldHidePendingAsset("headshot", url)) return null;
+  return url;
+});
+const selectedTurnaroundUrl = computed(() => {
+  const url = selectedCharacter.value?.turnaround_image_url ?? null;
+  if (shouldHidePendingAsset("turnaround", url)) return null;
+  return url;
+});
+const selectedTurnaroundIsVideo = computed(() =>
+  /\.(mp4|webm|mov)(?:\?|$)/i.test(selectedTurnaroundUrl.value ?? "")
+);
+const imagePendingLabel = computed(() => selectedHasRegenJob.value ? "图片生成中" : "等待生成图片");
+const videoPendingLabel = computed(() => selectedHasRegenJob.value ? "视频生成中" : "等待生成 360 参考视频");
+const selectedVoiceDescription = computed(() => {
+  const voice = selectedCharacter.value?.voice_profile;
+  if (!voice || voice.source === "placeholder") return "暂无角色声音";
+  return voice.description ?? "暂无角色声音";
+});
+const selectedImagePrompts = computed(() => {
+  const prompts = selectedCharacter.value?.image_prompts;
+  if (!prompts) return [];
+  return [
+    { key: "full_body", label: "全身参考图", prompt: prompts.full_body },
+    { key: "headshot", label: "头像参考图", prompt: prompts.headshot },
+    { key: "turnaround", label: "360 旋转参考视频", prompt: prompts.turnaround }
+  ].filter((item): item is { key: string; label: string; prompt: string } => Boolean(item.prompt));
+});
 </script>
 
 <template>
@@ -473,6 +580,7 @@ const selectedFullBodyImageUrl = computed(
         @restore="handleRestorePromptProfile"
         @confirm="handleConfirmPromptProfile"
         @skip="handleSkipPromptProfile"
+        @cancel-generate="handleCancelJob(activeCharacterPromptProfileJobId)"
       />
       <StyleReferenceCard
         kind="character"
@@ -480,6 +588,7 @@ const selectedFullBodyImageUrl = computed(
         :disabled="!flags.canEditCharacters"
         :running="!!activeCharacterStyleReferenceJobId"
         @generate="handleGenerateStyleReference"
+        @cancel-generate="handleCancelJob(activeCharacterStyleReferenceJobId)"
       />
     </div>
 
@@ -487,6 +596,7 @@ const selectedFullBodyImageUrl = computed(
     <div v-if="activeGenerateCharactersJobId" class="gen-banner running">
       <div class="gen-head">
         <strong>{{ generateProgressLabel }}</strong>
+        <button class="ghost-btn small" type="button" @click="handleCancelJob(activeGenerateCharactersJobId)">取消生成</button>
       </div>
       <ProgressBar :value="generateJob?.progress ?? 0" />
     </div>
@@ -570,18 +680,38 @@ const selectedFullBodyImageUrl = computed(
                 alt="全身参考图"
                 loading="lazy"
               />
-              <div v-else class="asset-image-card__empty">等待生成全身图</div>
+              <div v-else class="asset-image-card__empty">{{ imagePendingLabel }}</div>
               <figcaption>全身参考图</figcaption>
             </figure>
             <figure class="asset-image-card">
               <img
-                v-if="selectedCharacter.headshot_image_url"
-                :src="selectedCharacter.headshot_image_url"
+                v-if="selectedHeadshotImageUrl"
+                :src="selectedHeadshotImageUrl"
                 alt="头像参考图"
                 loading="lazy"
               />
-              <div v-else class="asset-image-card__empty">等待生成头像图</div>
+              <div v-else class="asset-image-card__empty">{{ imagePendingLabel }}</div>
               <figcaption>头像参考图</figcaption>
+            </figure>
+            <figure
+              class="asset-image-card asset-image-card--wide"
+              :class="{ 'asset-image-card--video': selectedTurnaroundIsVideo }"
+            >
+              <video
+                v-if="selectedTurnaroundUrl && selectedTurnaroundIsVideo"
+                :src="selectedTurnaroundUrl"
+                controls
+                playsinline
+                preload="metadata"
+              />
+              <img
+                v-else-if="selectedTurnaroundUrl"
+                :src="selectedTurnaroundUrl"
+                alt="360 旋转设定图"
+                loading="lazy"
+              />
+              <div v-else class="asset-image-card__empty">{{ videoPendingLabel }}</div>
+              <figcaption>360 旋转参考视频</figcaption>
             </figure>
           </div>
 
@@ -597,6 +727,23 @@ const selectedFullBodyImageUrl = computed(
                 <li v-for="meta in selectedCharacter.meta" :key="meta">{{ meta }}</li>
               </ul>
               <p v-else class="faint">暂无 meta</p>
+            </article>
+
+            <article class="asset-meta">
+              <span>角色声音</span>
+              <p class="faint">{{ selectedVoiceDescription }}</p>
+            </article>
+
+            <article v-if="selectedImagePrompts.length" class="asset-prompts">
+              <span>生成图片提示词</span>
+              <details
+                v-for="item in selectedImagePrompts"
+                :key="item.key"
+                class="prompt-block"
+              >
+                <summary>{{ item.label }}</summary>
+                <pre>{{ item.prompt }}</pre>
+              </details>
             </article>
 
             <div class="asset-actions">
@@ -696,19 +843,41 @@ const selectedFullBodyImageUrl = computed(
 .subpage-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
 .subpage-head h3 { margin: 0; font-size: 22px; }
 .asset-layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 24px; }
-.character-image-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.character-image-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 14px;
+}
 .asset-image-card {
+  align-self: start;
   margin: 0;
   overflow: hidden;
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-md);
   background: #0b0d1a;
 }
-.asset-image-card img {
+.asset-image-card img,
+.asset-image-card video {
   display: block;
   width: 100%;
+  height: auto;
   aspect-ratio: 3 / 4;
   object-fit: cover;
+}
+.asset-image-card--wide {
+  grid-column: 1 / -1;
+}
+.asset-image-card--wide img,
+.asset-image-card--wide .asset-image-card__empty {
+  aspect-ratio: 16 / 9;
+}
+.asset-image-card--video {
+  max-width: 260px;
+}
+.asset-image-card--video video {
+  aspect-ratio: 9 / 16;
+  object-fit: contain;
 }
 .asset-image-card__empty {
   display: grid;
@@ -731,6 +900,32 @@ const selectedFullBodyImageUrl = computed(
 .asset-copy p { margin: 0; font-size: 14px; color: var(--text-muted); line-height: 1.6; }
 .asset-meta span { display: block; font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
 .asset-meta ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+.asset-prompts span { display: block; font-size: 12px; color: var(--accent); margin-bottom: 10px; }
+.prompt-block {
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.025);
+  overflow: hidden;
+}
+.prompt-block + .prompt-block { margin-top: 8px; }
+.prompt-block summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  user-select: none;
+}
+.prompt-block pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 0 12px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .tag.accent { background: var(--accent-dim); color: var(--accent); padding: 4px 10px; border-radius: 999px; font-size: 12px; }
 .empty-note { padding: 40px 0; text-align: center; color: var(--text-faint); font-size: 14px; }
 

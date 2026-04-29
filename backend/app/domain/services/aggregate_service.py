@@ -36,6 +36,12 @@ class AggregateService:
         # 3. 获取角色和场景
         stmt_chars = select(Character).where(Character.project_id == project_id).order_by(Character.created_at)
         chars = (await self.session.scalars(stmt_chars)).all()
+        character_names = [c.name for c in chars]
+        from app.tasks.ai.prompt_builders import (
+            build_character_full_body_prompt,
+            build_character_headshot_prompt,
+            build_character_turnaround_prompt,
+        )
         
         stmt_scenes = select(Scene).where(Scene.project_id == project_id).order_by(Scene.created_at)
         scenes = (await self.session.scalars(stmt_scenes)).all()
@@ -204,6 +210,31 @@ class AggregateService:
                 "reference_image_url": build_asset_url(c.full_body_image_url or c.reference_image_url),
                 "full_body_image_url": build_asset_url(c.full_body_image_url or c.reference_image_url),
                 "headshot_image_url": build_asset_url(c.headshot_image_url),
+                "turnaround_image_url": build_asset_url(c.turnaround_image_url),
+                "is_humanoid": c.is_humanoid,
+                "voice_profile": c.voice_profile,
+                "voice_reference_audio_url": build_asset_url(c.voice_reference_audio_url),
+                "voice_asset_id": c.voice_asset_id,
+                "image_prompts": {
+                    "full_body": build_character_full_body_prompt(
+                        project,
+                        c,
+                        has_reference_image=bool(project.character_style_reference_image_url),
+                    ),
+                    "headshot": build_character_headshot_prompt(
+                        project,
+                        c,
+                        has_reference_image=bool(c.full_body_image_url or c.reference_image_url),
+                    ),
+                    "turnaround": build_character_turnaround_prompt(
+                        project,
+                        c,
+                        character_names=character_names,
+                        has_reference_image=bool(c.full_body_image_url),
+                    )
+                    if c.is_humanoid
+                    else None,
+                },
             } for c in chars],
             scenes=[{
                 "id": s.id,

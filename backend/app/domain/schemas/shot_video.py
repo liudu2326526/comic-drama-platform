@@ -14,6 +14,8 @@ class ShotVideoSubmitRequest(BaseModel):
     duration: int | None = Field(default=None, ge=4, le=15)
     resolution: Literal["480p", "720p"]
     model_type: Literal["standard", "fast"]
+    generate_audio: bool = True
+    reference_audio_url: str | None = None
 
 
 class ShotVideoVersionRead(BaseModel):

@@ -17,6 +17,7 @@ ALLOWED_KINDS = {
     "scene_style_reference",
     "character_full_body",
     "character_headshot",
+    "character_turnaround",
 }
 
 

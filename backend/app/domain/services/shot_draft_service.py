@@ -99,6 +99,10 @@ class ShotDraftService:
                 "name": project.name,
                 "genre": project.genre,
                 "ratio": project.ratio,
+                "summary": project.summary,
+                "overview": project.overview,
+                "character_prompt_profile": (project.character_prompt_profile_applied or {}).get("prompt"),
+                "scene_prompt_profile": (project.scene_prompt_profile_applied or {}).get("prompt"),
             },
             "shot": {
                 "id": shot.id,

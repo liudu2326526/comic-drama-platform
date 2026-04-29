@@ -8,7 +8,7 @@ echo "--- M2 Smoke Test ---"
 echo "[1/7] Create project"
 PID=$(curl -fsS -X POST "$BASE/api/v1/projects" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"M2 冒烟项目","story":"在遥远的星系,有一个充满了魔法的星球...","genre":"科幻"}' | jq -r .data.id)
+  -d '{"name":"M2 冒烟项目","story":"在遥远的星系,有一个充满了魔法的星球..."}' | jq -r .data.id)
 echo "Project created: $PID"
 
 echo "[2/7] Trigger parse"

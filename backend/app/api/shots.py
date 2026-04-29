@@ -163,6 +163,8 @@ async def generate_video(
             duration=payload.duration,
             resolution=payload.resolution,
             model_type=payload.model_type,
+            generate_audio=payload.generate_audio,
+            reference_audio_url=payload.reference_audio_url,
         )
         job = await JobService(db).create_job(
             project_id=project_id,

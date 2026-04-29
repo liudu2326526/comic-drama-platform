@@ -64,7 +64,7 @@ async def _run(project_id: str, job_id: str) -> None:
             await session.commit()
 
             for char_id, child_id in sub_tasks:
-                gen_character_asset.delay(char_id, child_id)
+                gen_character_asset.delay(char_id, child_id, True)
         except Exception as exc:
             logger.exception("regen character assets batch failed: %s", exc)
             await update_job_progress(session, job_id, status="failed", error_msg=str(exc))

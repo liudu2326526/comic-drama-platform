@@ -15,6 +15,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   generate: [];
+  cancelGenerate: [];
   save: [prompt: string];
   clear: [];
   restore: [];
@@ -78,6 +79,7 @@ function saveDraft() {
 
     <div v-if="generating" class="job-banner running">
       <strong>{{ generateJobLabel || "正在生成统一视觉设定…" }}</strong>
+      <button class="ghost-btn small" type="button" @click="emit('cancelGenerate')">取消生成</button>
     </div>
     <div v-else-if="generateError" class="job-banner error">
       <strong>生成失败</strong>

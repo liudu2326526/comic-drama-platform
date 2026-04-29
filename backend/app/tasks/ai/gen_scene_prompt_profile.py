@@ -6,7 +6,7 @@ from app.config import get_settings
 from app.domain.models import Job, Project
 from app.infra.db import get_session_factory
 from app.infra.volcano_client import get_volcano_client
-from app.pipeline.transitions import update_job_progress
+from app.pipeline.transitions import is_job_canceled, update_job_progress
 from app.tasks.celery_app import celery_app
 from app.utils.json_utils import extract_json
 
@@ -46,6 +46,8 @@ async def _run(project_id: str, job_id: str) -> None:
     settings = get_settings()
     async with session_factory() as session:
         try:
+            if await is_job_canceled(session, job_id):
+                return
             await update_job_progress(session, job_id, status="running", progress=10)
             await session.commit()
 
@@ -59,6 +61,8 @@ async def _run(project_id: str, job_id: str) -> None:
                 model=settings.ark_chat_model,
                 messages=build_scene_prompt_profile_messages(project),
             )
+            if await is_job_canceled(session, job_id):
+                return
             content = response.choices[0].message.content
             payload = {"prompt": extract_json(content)["prompt"].strip(), "source": "ai"}
             project.scene_prompt_profile_draft = payload
@@ -70,6 +74,9 @@ async def _run(project_id: str, job_id: str) -> None:
             await update_job_progress(session, job_id, status="succeeded", progress=100)
             await session.commit()
         except Exception as exc:
+            if await is_job_canceled(session, job_id):
+                await session.rollback()
+                return
             logger.exception("generate scene prompt profile failed: %s", exc)
             await update_job_progress(session, job_id, status="failed", error_msg=str(exc))
             await session.commit()

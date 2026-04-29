@@ -11,7 +11,6 @@ import { ApiError, messageFor } from "@/utils/error";
 const form = ref({
   name: "",
   story: "",
-  genre: "古风权谋",
   ratio: "9:16"
 });
 const savingDraft = ref(false);
@@ -29,7 +28,6 @@ async function createOnly(): Promise<string | null> {
   const resp = await projects.createProject({
     name: form.value.name.trim(),
     story: form.value.story.trim(),
-    genre: form.value.genre,
     ratio: form.value.ratio
   });
   return resp.id;
@@ -89,15 +87,6 @@ async function startParse() {
       </label>
 
       <div class="form-row">
-        <label>
-          <span>题材</span>
-          <select v-model="form.genre">
-            <option>古风权谋</option>
-            <option>学院科幻</option>
-            <option>都市悬疑</option>
-            <option>其他</option>
-          </select>
-        </label>
         <label>
           <span>画幅比例</span>
           <select v-model="form.ratio">

@@ -173,5 +173,5 @@ async def regenerate_character(
     db.add(job)
     await db.commit()
     
-    gen_character_asset.delay(char.id, job.id)
+    gen_character_asset.delay(char.id, job.id, True)
     return Envelope.success(GenerateJobAck(job_id=job.id, sub_job_ids=[]))

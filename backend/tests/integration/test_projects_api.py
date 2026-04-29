@@ -5,7 +5,7 @@ import pytest
 async def test_create_and_get_project(client):
     resp = await client.post(
         "/api/v1/projects",
-        json={"name": "测试项目", "story": "从前有座山", "genre": "古风"},
+        json={"name": "测试项目", "story": "从前有座山"},
     )
     assert resp.status_code == 200
     body = resp.json()

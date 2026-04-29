@@ -20,7 +20,6 @@ class ProjectService:
         project = Project(
             name=payload.name,
             story=payload.story,
-            genre=payload.genre,
             ratio=payload.ratio,
             setup_params=payload.setup_params,
         )

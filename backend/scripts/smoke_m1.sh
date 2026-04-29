@@ -9,7 +9,7 @@ curl -fsS "$BASE/healthz" | jq .
 echo "[2/5] create project"
 PID=$(curl -fsS -X POST "$BASE/api/v1/projects" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"冒烟项目","story":"从前有座山","genre":"古风"}' | jq -r .data.id)
+  -d '{"name":"冒烟项目","story":"从前有座山"}' | jq -r .data.id)
 echo "created: $PID"
 
 echo "[3/5] get project"

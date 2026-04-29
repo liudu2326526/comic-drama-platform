@@ -5,15 +5,27 @@ import logging
 from app.infra.db import get_session_factory
 from app.infra.volcano_client import get_volcano_client
 from app.domain.models import Project
-from app.pipeline.transitions import update_job_progress
+from app.pipeline.transitions import is_job_canceled, update_job_progress
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_parsed_genre(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:64]
+
 
 async def _parse_novel_task(project_id: str, job_id: str):
     session_factory = get_session_factory()
     async with session_factory() as session:
         try:
+            if await is_job_canceled(session, job_id):
+                return
             # 1. 更新 Job 状态为 running
             await update_job_progress(session, job_id, status="running", progress=10)
             await session.commit()
@@ -34,8 +46,13 @@ async def _parse_novel_task(project_id: str, job_id: str):
   "summary": "一句话故事梗概",
   "overview": "详细的故事背景与情节概述",
   "parsed_stats": ["角色: N", "场景: M", "预计时长: Ts"],
-  "suggested_shots": 12
+  "suggested_shots": 12,
+  "genre": "从小说正文识别出的短题材标签,例如 现代末世、都市悬疑、科幻悬疑、古风权谋"
 }}
+
+要求：
+- genre 必须只依据小说正文判断,不要沿用任何已有项目字段。
+- genre 使用正向题材标签,不要通过禁止词或负面约束表达。
 
 小说内容：
 {project.story}"""
@@ -53,6 +70,8 @@ async def _parse_novel_task(project_id: str, job_id: str):
                 messages=messages
             )
             content_str = resp.choices[0].message.content
+            if await is_job_canceled(session, job_id):
+                return
             data = extract_json(content_str)
 
             # 4. 更新项目
@@ -60,6 +79,9 @@ async def _parse_novel_task(project_id: str, job_id: str):
             project.parsed_stats = data.get("parsed_stats")
             project.overview = data.get("overview")
             project.suggested_shots = data.get("suggested_shots")
+            parsed_genre = normalize_parsed_genre(data.get("genre"))
+            if parsed_genre:
+                project.genre = parsed_genre
             
             # 5. 更新 Job 为成功
             await update_job_progress(session, job_id, status="succeeded", progress=100)
@@ -84,6 +106,9 @@ async def _parse_novel_task(project_id: str, job_id: str):
                 gen_storyboard.delay(project_id, gen_job.id)
             
         except Exception as e:
+            if await is_job_canceled(session, job_id):
+                await session.rollback()
+                return
             logger.exception(f"Error in parse_novel_task: {e}")
             await update_job_progress(session, job_id, status="failed", error_msg=str(e))
             await session.commit()

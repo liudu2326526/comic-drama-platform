@@ -42,6 +42,40 @@ async def test_video_task_create_uses_raw_prompt_and_reference_images(patched_se
     assert body["ratio"] == "9:16"
 
 
+@pytest.mark.asyncio
+async def test_video_task_create_accepts_first_and_last_frame_inputs(patched_settings, respx_mock):
+    route = respx_mock.post(url__regex=r".*/contents/generations/tasks").mock(
+        return_value=httpx.Response(200, json={"id": "cgt-test"})
+    )
+    client = RealVolcanoClient()
+
+    await client.video_generations_create(
+        model="doubao-seedance-2-0-test",
+        prompt="通用人物参考视频提示词",
+        image_inputs=[
+            {"role": "first_frame", "url": "https://example.com/full.png"},
+            {"role": "last_frame", "url": "https://example.com/head.png"},
+        ],
+        duration=8,
+        resolution="720p",
+        ratio="9:16",
+        generate_audio=True,
+    )
+
+    body = json.loads(route.calls[0].request.content.decode("utf-8"))
+    assert body["content"][1] == {
+        "type": "image_url",
+        "role": "first_frame",
+        "image_url": {"url": "https://example.com/full.png"},
+    }
+    assert body["content"][2] == {
+        "type": "image_url",
+        "role": "last_frame",
+        "image_url": {"url": "https://example.com/head.png"},
+    }
+    assert body["generate_audio"] is True
+
+
 def test_real_volcano_client_uses_configured_timeout(patched_settings, monkeypatch):
     assert hasattr(patched_settings, "ai_request_timeout_sec")
     monkeypatch.setattr(patched_settings, "ai_request_timeout_sec", 123.0, raising=False)

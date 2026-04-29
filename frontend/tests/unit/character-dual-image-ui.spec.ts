@@ -27,7 +27,12 @@ describe("character dual image UI", () => {
           meta: [],
           reference_image_url: "full.png",
           full_body_image_url: "full.png",
-          headshot_image_url: "head.png"
+          headshot_image_url: "head.png",
+          image_prompts: {
+            full_body: "全身提示词：角色名称：秦昭",
+            headshot: "头像提示词：头像参考图",
+            turnaround: "360提示词：360 度旋转设定图"
+          }
         }
       ],
       scenes: [],
@@ -39,5 +44,9 @@ describe("character dual image UI", () => {
 
     expect(wrapper.text()).toContain("全身参考图");
     expect(wrapper.text()).toContain("头像参考图");
+    expect(wrapper.text()).toContain("生成图片提示词");
+    expect(wrapper.text()).toContain("全身提示词：角色名称：秦昭");
+    expect(wrapper.text()).toContain("头像提示词：头像参考图");
+    expect(wrapper.text()).toContain("360提示词：360 度旋转设定图");
   });
 });

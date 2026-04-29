@@ -17,7 +17,7 @@ require jq
 
 echo "[1/9] 创建项目 $NAME"
 pid=$(curl -s -X POST "$API/projects" -H "Content-Type: application/json" \
-  -d "$(jq -n --arg name "$NAME" '{name:$name, story:"古风权谋,皇权更迭,秦昭与江离,少年天子与摄政王的暗流。",genre:"古风权谋",ratio:"9:16"}')" \
+  -d "$(jq -n --arg name "$NAME" '{name:$name, story:"古风权谋,皇权更迭,秦昭与江离,少年天子与摄政王的暗流。",ratio:"9:16"}')" \
   | jq -r '.data.id')
 echo "  project id: $pid"
 

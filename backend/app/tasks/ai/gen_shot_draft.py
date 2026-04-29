@@ -11,7 +11,7 @@ from app.domain.services.reference_candidates import (
 )
 from app.infra import get_volcano_client
 from app.infra.db import get_session_factory
-from app.pipeline.transitions import update_job_progress
+from app.pipeline.transitions import is_job_canceled, update_job_progress
 from app.tasks.celery_app import celery_app
 from app.utils.json_utils import extract_json
 
@@ -63,6 +63,7 @@ def _build_prompt_messages(context: dict, selected_references: list[dict]) -> li
     )
     user = (
         "请基于当前镜头与已选参考图，生成一份可直接用于视频生成的草稿提示词。\n"
+        "项目题材、故事概要、项目概览和已应用视觉设定是生成镜头草稿的最高优先级上下文；如果字段之间存在差异,以已应用视觉设定和故事内容为准。\n"
         f"项目：{json.dumps(context['project'], ensure_ascii=False)}\n"
         f"镜头：{json.dumps(shot, ensure_ascii=False)}\n"
         f"已选参考图：\n{references_json}\n\n"
@@ -115,6 +116,8 @@ async def _gen_shot_draft_task(project_id: str, shot_id: str, job_id: str) -> No
     settings = get_settings()
     async with session_factory() as session:
         try:
+            if await is_job_canceled(session, job_id):
+                return
             await update_job_progress(session, job_id, status="running", progress=10, done=1, total=5)
             await session.commit()
 
@@ -129,6 +132,8 @@ async def _gen_shot_draft_task(project_id: str, shot_id: str, job_id: str) -> No
                 model=settings.ark_chat_model,
                 messages=_build_selection_messages(context),
             )
+            if await is_job_canceled(session, job_id):
+                return
             selection_payload = extract_json(selection_response.choices[0].message.content)
             references, selection_notes = _normalize_selection_payload(
                 selection_payload,
@@ -141,6 +146,8 @@ async def _gen_shot_draft_task(project_id: str, shot_id: str, job_id: str) -> No
                 model=settings.ark_chat_model,
                 messages=_build_prompt_messages(context, references),
             )
+            if await is_job_canceled(session, job_id):
+                return
             prompt_payload = extract_json(prompt_response.choices[0].message.content)
             prompt, optimizer_notes = _normalize_prompt_payload(prompt_payload)
             await update_job_progress(session, job_id, progress=75, done=4, total=5)
@@ -174,6 +181,9 @@ async def _gen_shot_draft_task(project_id: str, shot_id: str, job_id: str) -> No
             )
             await session.commit()
         except Exception as exc:
+            if await is_job_canceled(session, job_id):
+                await session.rollback()
+                return
             logger.exception("gen_shot_draft task failed for shot %s", shot_id)
             await update_job_progress(session, job_id, status="failed", error_msg=str(exc))
             await session.commit()

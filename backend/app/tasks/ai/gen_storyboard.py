@@ -10,6 +10,7 @@ from app.infra.db import get_session_factory
 from app.infra.volcano_client import get_volcano_client
 from app.domain.models import Project, StoryboardShot
 from app.pipeline import ProjectStageRaw, advance_stage, update_job_progress
+from app.pipeline.transitions import is_job_canceled
 from app.pipeline.storyboard_states import StoryboardStatus
 from app.tasks.async_runner import run_async_task
 from app.tasks.celery_app import celery_app
@@ -254,6 +255,8 @@ async def _gen_storyboard_task(project_id: str, job_id: str):
     session_factory = get_session_factory()
     async with session_factory() as session:
         try:
+            if await is_job_canceled(session, job_id):
+                return
             # 1. 更新 Job 状态为 running
             await update_job_progress(session, job_id, status="running", progress=10, done=0, total=4)
             await session.commit()
@@ -279,6 +282,8 @@ async def _gen_storyboard_task(project_id: str, job_id: str):
                 ],
             )
             segments = _storyboards_from_json(data)
+            if await is_job_canceled(session, job_id):
+                return
             if not segments:
                 raise ValueError("未生成分镜片段")
             total_steps = len(segments) + 3
@@ -291,6 +296,8 @@ async def _gen_storyboard_task(project_id: str, job_id: str):
             await session.commit()
 
             async def on_expand_done(done_count: int) -> None:
+                if await is_job_canceled(session, job_id):
+                    return
                 progress = 35 + int(55 * done_count / len(segments))
                 await update_job_progress(session, job_id, progress=progress, done=done_count + 2, total=total_steps)
                 await session.commit()
@@ -302,6 +309,8 @@ async def _gen_storyboard_task(project_id: str, job_id: str):
                 source_pairs,
                 on_item_done=on_expand_done,
             )
+            if await is_job_canceled(session, job_id):
+                return
 
             # 5. 批量插入分镜
             # 先清理已有的分镜(如果是重跑的话,但 M2 暂不考虑复杂重跑逻辑)
@@ -334,6 +343,9 @@ async def _gen_storyboard_task(project_id: str, job_id: str):
             logger.info(f"Project {project_id} storyboards generated successfully, advanced to storyboard_ready")
             
         except Exception as e:
+            if await is_job_canceled(session, job_id):
+                await session.rollback()
+                return
             logger.exception(f"Error in gen_storyboard_task: {e}")
             await update_job_progress(session, job_id, status="failed", error_msg=str(e))
             await session.commit()

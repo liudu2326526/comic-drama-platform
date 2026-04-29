@@ -8,6 +8,8 @@ from app.api.errors import ApiError
 from app.config import get_settings
 from app.deps import get_db
 from app.domain.models import Job, ShotVideoRender
+from app.infra.volcano_client import get_volcano_client
+from app.pipeline.transitions import update_job_progress
 from app.domain.services.job_progress_estimator import (
     duration_seconds,
     estimate_display_progress,
@@ -57,6 +59,22 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
     })
 
 
+@router.post("/{job_id}/cancel")
+async def cancel_job(job_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
+    job = result.scalar_one_or_none()
+    if not job:
+        raise ApiError(40401, "Job 不存在", http_status=404)
+    if job.status not in {"queued", "running"}:
+        raise ApiError(40901, "任务已结束,不能取消", http_status=409)
+
+    await _cancel_child_jobs_if_needed(db, job)
+    await _cancel_provider_task_if_needed(db, job)
+    await update_job_progress(db, job.id, status="canceled")
+    await db.commit()
+    return ok({"id": job.id, "status": job.status})
+
+
 async def _recent_durations_for_job(db: AsyncSession, job: Job, limit: int) -> list[int]:
     if limit <= 0:
         return []
@@ -79,6 +97,44 @@ async def _recent_durations_for_job(db: AsyncSession, job: Job, limit: int) -> l
         if len(durations) >= limit:
             break
     return durations
+
+
+async def _cancel_provider_task_if_needed(db: AsyncSession, job: Job) -> None:
+    if job.kind != "render_shot_video":
+        return
+    payload = job.payload if isinstance(job.payload, dict) else {}
+    render_id = payload.get("video_render_id")
+    if not render_id:
+        return
+    video = await db.get(ShotVideoRender, render_id)
+    if not video or not video.provider_task_id:
+        return
+    if video.provider_status not in {"queued", "running"}:
+        return
+    try:
+        provider = await get_volcano_client().video_generations_delete(video.provider_task_id)
+        video.provider_status = (
+            provider.get("status")
+            if isinstance(provider, dict) and provider.get("status")
+            else "cancelled"
+        )
+    except Exception:
+        # Provider cancellation is best-effort; the local job state still records the user cancel.
+        return
+
+
+async def _cancel_child_jobs_if_needed(db: AsyncSession, job: Job) -> None:
+    result = await db.execute(
+        select(Job)
+        .where(
+            Job.parent_id == job.id,
+            Job.status.in_(["queued", "running"]),
+        )
+        .with_for_update()
+    )
+    children = result.scalars().all()
+    for child in children:
+        await update_job_progress(db, child.id, status="canceled")
 
 
 async def _video_job_group(db: AsyncSession, job: Job) -> tuple[str | None, str | None, int | None]:

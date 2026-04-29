@@ -128,6 +128,8 @@ function toVideoParamSummary(snapshot: Record<string, unknown>) {
     duration: snapshot.duration === null || snapshot.duration === undefined ? null : Number(snapshot.duration),
     resolution: String(snapshot.resolution ?? "480p") as ShotVideoResolution,
     modelType: String(snapshot.model_type ?? "fast") as ShotVideoModelType,
+    generateAudio: Boolean(snapshot.generate_audio ?? true),
+    referenceAudioUrl: (snapshot.reference_audio_url as string | null | undefined) ?? null,
   };
 }
 
@@ -232,6 +234,10 @@ useJobPolling(activeDraftJobId, {
       (err instanceof ApiError ? messageFor(err.code, err.message) : "生成草稿失败");
     if (shotId) store.markDraftFailed(shotId, msg);
     toast.error(msg);
+  },
+  onCanceled: (j) => {
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
@@ -254,6 +260,10 @@ useJobPolling(activeRenderJobId, {
       (err instanceof ApiError ? messageFor(err.code, err.message) : "视频生成失败");
     store.markRenderFailed(msg);
     toast.error(msg);
+  },
+  onCanceled: (j) => {
+    store.clearCanceledJob(j.id);
+    toast.info("已取消生成");
   }
 });
 
@@ -451,6 +461,16 @@ async function generateVideo() {
   }
 }
 
+async function cancelActiveJob(jobId: string | null) {
+  if (!jobId) return;
+  try {
+    await store.cancelJob(jobId);
+    toast.info("已请求取消，等待当前步骤结束");
+  } catch (e) {
+    toast.error(e instanceof ApiError ? messageFor(e.code, e.message) : "取消失败");
+  }
+}
+
 function setDuration(duration: ShotVideoDurationPreset) {
   if (!selectedRenderShot.value) return;
   store.setVideoDraftOptions(selectedRenderShot.value.shotId, {
@@ -466,6 +486,11 @@ function setResolution(resolution: ShotVideoResolution) {
 function setModelType(modelType: ShotVideoModelType) {
   if (!selectedRenderShot.value) return;
   store.setVideoDraftOptions(selectedRenderShot.value.shotId, { modelType });
+}
+
+function setGenerateAudio(value: boolean) {
+  if (!selectedRenderShot.value) return;
+  store.setVideoDraftOptions(selectedRenderShot.value.shotId, { generateAudio: value });
 }
 
 async function handleSelectVersion(videoId: string) {
@@ -554,6 +579,14 @@ async function handleLockShot() {
                 {{ generateDraftButtonText }}
               </button>
               <button
+                v-if="activeDraftJobId"
+                class="ghost-btn"
+                type="button"
+                @click="cancelActiveJob(activeDraftJobId)"
+              >
+                取消生成
+              </button>
+              <button
                 class="ghost-btn"
                 type="button"
                 data-testid="history-btn"
@@ -598,12 +631,20 @@ async function handleLockShot() {
                 <button class="ghost-btn small" type="button" :class="{ active: selectedVideoOptions?.modelType === 'fast' }" @click="setModelType('fast')">极速</button>
               </div>
             </article>
+            <article>
+              <span>声音</span>
+              <div class="selector-row">
+                <button class="ghost-btn small" type="button" :class="{ active: selectedVideoOptions?.generateAudio }" @click="setGenerateAudio(true)">生成声音</button>
+                <button class="ghost-btn small" type="button" :class="{ active: !selectedVideoOptions?.generateAudio }" @click="setGenerateAudio(false)">无声</button>
+              </div>
+            </article>
           </div>
 
           <div v-if="activeRenderJobId && activeRenderShotId === selectedRenderShot.shotId" class="render-progress">
             <div class="progress-head">
               <strong>镜头生成中</strong>
               <span>{{ renderProgress }}%</span>
+              <button class="ghost-btn small" type="button" @click="cancelActiveJob(activeRenderJobId)">取消生成</button>
             </div>
             <ProgressBar :value="renderProgress" />
             <small v-if="renderProgressLabel">{{ renderProgressLabel }}</small>

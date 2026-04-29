@@ -15,6 +15,7 @@ from app.infra.volcano_errors import (
     humanize_volcano_error_message,
 )
 from app.pipeline.transitions import (
+    is_job_canceled,
     mark_shot_render_failed,
     mark_shot_render_running,
     mark_shot_render_succeeded,
@@ -65,6 +66,8 @@ def _volcano_error_code(exc: VolcanoError) -> str:
 async def _render_shot_task(shot_id: str, render_id: str, job_id: str) -> None:
     session_factory = get_session_factory()
     async with session_factory() as session:
+        if await is_job_canceled(session, job_id):
+            return
         render = await session.get(ShotRender, render_id)
         shot = await session.get(StoryboardShot, shot_id)
         if render is None or shot is None or render.shot_id != shot.id:
@@ -113,6 +116,8 @@ async def _render_shot_task(shot_id: str, render_id: str, job_id: str) -> None:
                 n=1,
                 size=getattr(settings, "ark_shot_image_size", "1024x1792"),
             )
+            if await is_job_canceled(session, job_id):
+                return
             await update_job_progress(session, job_id, progress=55)
             await session.commit()
 
@@ -128,11 +133,17 @@ async def _render_shot_task(shot_id: str, render_id: str, job_id: str) -> None:
             job.result = {"shot_id": shot.id, "render_id": render.id, "image_url": object_key}
             await session.commit()
         except VolcanoError as exc:
+            if await is_job_canceled(session, job_id):
+                await session.rollback()
+                return
             msg = humanize_volcano_error_message(str(exc))
             mark_shot_render_failed(shot, render, error_code=_volcano_error_code(exc), error_msg=msg)
             await update_job_progress(session, job_id, status="failed", error_msg=msg)
             await session.commit()
         except Exception as exc:
+            if await is_job_canceled(session, job_id):
+                await session.rollback()
+                return
             logger.exception("render_shot failed")
             mark_shot_render_failed(shot, render, error_code="internal_error", error_msg=str(exc))
             await update_job_progress(session, job_id, status="failed", error_msg=str(exc))

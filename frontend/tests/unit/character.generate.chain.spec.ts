@@ -70,7 +70,7 @@ const mkProject = (overrides: Partial<import("@/types").ProjectData> = {}) => ({
   name: "Demo",
   stage: "分镜已生成" as const,
   stage_raw: "storyboard_ready" as const,
-  genre: "古风权谋",
+  genre: "现代末世",
   ratio: "9:16",
   suggestedShots: "",
   story: "",

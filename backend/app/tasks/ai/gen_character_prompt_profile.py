@@ -6,7 +6,7 @@ from app.config import get_settings
 from app.domain.models import Job, Project
 from app.infra.db import get_session_factory
 from app.infra.volcano_client import get_volcano_client
-from app.pipeline.transitions import update_job_progress
+from app.pipeline.transitions import is_job_canceled, update_job_progress
 from app.tasks.celery_app import celery_app
 from app.utils.json_utils import extract_json
 
@@ -17,9 +17,12 @@ def build_character_prompt_profile_messages(project: Project) -> list[dict[str, 
     system_prompt = (
         "你是漫剧项目的视觉设定师。"
         "请只返回 JSON 对象，字段固定为 prompt。"
-        "prompt 必须是一段中文自然语言，显式覆盖以下 7 个维度："
-        "world_era、visual_style、palette_lighting、lens_language、"
-        "character_rules、scene_rules、negative_rules。"
+        "prompt 必须是一段中文自然语言，只服务于角色参考图和角色形象统一，不服务于场景图。"
+        "显式覆盖以下 6 个维度："
+        "portrait_layout、visual_style、palette_lighting、line_rendering、"
+        "character_rules、negative_rules。"
+        "portrait_layout 必须写明 9:16竖屏、白底或极简浅色背景、单人全身设定图。"
+        "不要写入任何环境描写、世界观事件、地点、建筑、天气、场景道具、怪物、群众或剧情动作。"
         "不要返回 markdown，不要返回解释，不要省略字段语义。"
     )
     project_context = {
@@ -46,6 +49,8 @@ async def _run(project_id: str, job_id: str) -> None:
     settings = get_settings()
     async with session_factory() as session:
         try:
+            if await is_job_canceled(session, job_id):
+                return
             await update_job_progress(session, job_id, status="running", progress=10)
             await session.commit()
 
@@ -59,6 +64,8 @@ async def _run(project_id: str, job_id: str) -> None:
                 model=settings.ark_chat_model,
                 messages=build_character_prompt_profile_messages(project),
             )
+            if await is_job_canceled(session, job_id):
+                return
             content = response.choices[0].message.content
             payload = {"prompt": extract_json(content)["prompt"].strip(), "source": "ai"}
             project.character_prompt_profile_draft = payload
@@ -70,6 +77,9 @@ async def _run(project_id: str, job_id: str) -> None:
             await update_job_progress(session, job_id, status="succeeded", progress=100)
             await session.commit()
         except Exception as exc:
+            if await is_job_canceled(session, job_id):
+                await session.rollback()
+                return
             logger.exception("generate character prompt profile failed: %s", exc)
             await update_job_progress(session, job_id, status="failed", error_msg=str(exc))
             await session.commit()

@@ -8,6 +8,7 @@ import { promptProfilesApi } from "@/api/promptProfiles";
 import { styleReferencesApi } from "@/api/styleReferences";
 import { scenesApi } from "@/api/scenes";
 import { shotsApi } from "@/api/shots";
+import { jobsApi } from "@/api/jobs";
 import type { ProjectData, RenderShotItem, RenderStatus } from "@/types";
 import type {
   ProjectRollbackRequest,
@@ -85,6 +86,8 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     duration: ShotVideoDurationPreset | null;
     resolution: ShotVideoResolution;
     modelType: ShotVideoModelType;
+    generateAudio: boolean;
+    referenceAudioUrl: string | null;
   }>>({});
   const videoVersions = ref<Record<string, ShotVideoVersionRead[]>>({});
   const renderHistoryLoadingShotId = ref<string | null>(null);
@@ -228,7 +231,8 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     shotStatus?: string | null
   ): RenderStatus {
     if (status === "queued" || status === "running") return "processing";
-    if (status === "failed" || status === "canceled") return "failed";
+    if (status === "canceled") return "warning";
+    if (status === "failed") return "failed";
     if (status === "succeeded") return "success";
     if (shotStatus === "failed") return "failed";
     if (shotStatus === "generating") return "processing";
@@ -530,6 +534,64 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   function markGenStoryboardSucceeded() { genStoryboardJob.value = null; }
   function markGenStoryboardFailed(msg: string) { genStoryboardJob.value = null; parseError.value = msg; }
 
+  function clearCanceledJob(jobId: string) {
+    if (parseJob.value?.jobId === jobId) {
+      parseJob.value = null;
+      parseError.value = null;
+    }
+    if (genStoryboardJob.value?.jobId === jobId) {
+      genStoryboardJob.value = null;
+      parseError.value = null;
+    }
+    if (generateCharactersJob.value?.jobId === jobId) {
+      generateCharactersJob.value = null;
+      generateCharactersError.value = null;
+    }
+    if (characterPromptProfileJob.value?.jobId === jobId) {
+      characterPromptProfileJob.value = null;
+      characterPromptProfileError.value = null;
+    }
+    if (characterStyleReferenceJob.value?.jobId === jobId) {
+      characterStyleReferenceJob.value = null;
+      characterStyleReferenceError.value = null;
+    }
+    if (generateScenesJob.value?.jobId === jobId) {
+      generateScenesJob.value = null;
+      generateScenesError.value = null;
+    }
+    if (scenePromptProfileJob.value?.jobId === jobId) {
+      scenePromptProfileJob.value = null;
+      scenePromptProfileError.value = null;
+    }
+    if (sceneStyleReferenceJob.value?.jobId === jobId) {
+      sceneStyleReferenceJob.value = null;
+      sceneStyleReferenceError.value = null;
+    }
+    if (registerCharacterAssetJob.value?.jobId === jobId) {
+      registerCharacterAssetJob.value = null;
+      registerCharacterAssetError.value = null;
+    }
+    if (renderJob.value?.jobId === jobId) {
+      renderJob.value = null;
+      activeRenderJobState.value = null;
+      renderError.value = null;
+    }
+    for (const [shotId, rec] of Object.entries(draftJobs.value)) {
+      if (rec.jobId === jobId) {
+        delete draftJobs.value[shotId];
+        draftErrors.value[shotId] = null;
+      }
+    }
+    for (const [key, rec] of Object.entries(regenJobs.value)) {
+      if (rec.jobId === jobId) delete regenJobs.value[key];
+    }
+  }
+
+  async function cancelJob(jobId: string) {
+    await jobsApi.cancel(jobId);
+    clearCanceledJob(jobId);
+  }
+
   async function createShot(payload: StoryboardCreateRequest) {
     if (!current.value) throw new Error("createShot: no current project");
     await storyboardsApi.create(current.value.id, payload);
@@ -828,6 +890,8 @@ export const useWorkbenchStore = defineStore("workbench", () => {
         duration: null,
         resolution: "480p",
         modelType: "fast",
+        generateAudio: true,
+        referenceAudioUrl: null,
       };
     }
     return videoDraftOptions.value[shotId];
@@ -839,7 +903,13 @@ export const useWorkbenchStore = defineStore("workbench", () => {
 
   function setVideoDraftOptions(
     shotId: string,
-    patch: Partial<{ duration: ShotVideoDurationPreset | null; resolution: ShotVideoResolution; modelType: ShotVideoModelType; }>
+    patch: Partial<{
+      duration: ShotVideoDurationPreset | null;
+      resolution: ShotVideoResolution;
+      modelType: ShotVideoModelType;
+      generateAudio: boolean;
+      referenceAudioUrl: string | null;
+    }>
   ) {
     videoDraftOptions.value[shotId] = { ...ensureVideoDraftOptions(shotId), ...patch };
   }
@@ -869,6 +939,8 @@ export const useWorkbenchStore = defineStore("workbench", () => {
       ...(referenceMentions.length ? { reference_mentions: referenceMentions } : {}),
       resolution: options.resolution,
       model_type: options.modelType,
+      generate_audio: options.generateAudio,
+      reference_audio_url: options.referenceAudioUrl,
       ...(options.duration !== null ? { duration: options.duration } : {}),
     };
     const ack = await shotsApi.generateVideo(current.value.id, shotId, payload);
@@ -1013,6 +1085,7 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     startParse, markParseSucceeded, markParseFailed,
     findAndTrackGenStoryboardJob, findAndTrackActiveJobs,
     markGenStoryboardSucceeded, markGenStoryboardFailed,
+    cancelJob, clearCanceledJob,
     createShot, updateShot, deleteShot, reorderShots, moveShotUp, moveShotDown, confirmStoryboards,
     generateCharacters, markGenerateCharactersSucceeded, markGenerateCharactersFailed,
     attachGenerateCharactersJob,

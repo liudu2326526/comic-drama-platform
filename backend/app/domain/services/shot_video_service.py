@@ -72,6 +72,8 @@ class ShotVideoService:
         duration: int | None,
         resolution: str,
         model_type: str,
+        generate_audio: bool = True,
+        reference_audio_url: str | None = None,
         reference_mentions: list[ReferenceMention] | None = None,
     ) -> ShotVideoRender:
         project = await self._get_project(project_id)
@@ -113,7 +115,8 @@ class ShotVideoService:
             "model_type": model_type,
             "resolved_model": resolve_video_model(self.settings, model_type),
             "ratio": normalize_video_ratio(project.ratio),
-            "generate_audio": False,
+            "generate_audio": bool(generate_audio),
+            "reference_audio_url": reference_audio_url,
             "watermark": False,
             "return_last_frame": True,
             "execution_expires_after": self.settings.ark_video_execution_expires_after,

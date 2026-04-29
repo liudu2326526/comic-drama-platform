@@ -2,7 +2,7 @@
 # script/start_backend.sh
 # 启动后端 FastAPI 服务并将日志重定向到 logs/backend.log
 
-PROJECT_ROOT="/Users/macbook/Documents/trae_projects/comic-drama-platform"
+PROJECT_ROOT="${COMIC_DRAMA_PROJECT_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$PROJECT_ROOT/backend"
 
 echo "正在启动后端服务 (FastAPI/Uvicorn)..."

@@ -35,6 +35,8 @@ async def test_generate_character_style_reference_returns_job_ack(client, db_ses
 @pytest.mark.asyncio
 async def test_generate_scene_style_reference_returns_job_ack(client, db_session, monkeypatch):
     project = await _seed_project(db_session, stage="characters_locked")
+    project.scene_prompt_profile_applied = {"prompt": "现代都市末世,冷色霓虹光影。"}
+    await db_session.commit()
     dispatched: dict[str, str] = {}
 
     def fake_delay(project_id: str, job_id: str):
@@ -47,6 +49,22 @@ async def test_generate_scene_style_reference_returns_job_ack(client, db_session
 
     assert resp.status_code == 200
     assert resp.json()["data"]["job_id"] == dispatched["job_id"]
+
+
+@pytest.mark.asyncio
+async def test_generate_scene_style_reference_requires_applied_scene_profile(client, db_session):
+    # Direct seeding keeps this test focused on the scene style-reference guard.
+    project = await _seed_project(db_session, stage="characters_locked")
+    project.scene_prompt_profile_draft = {"prompt": "现代都市末世,冷色霓虹光影。"}
+    project.scene_prompt_profile_applied = None
+    await db_session.commit()
+
+    resp = await client.post(f"/api/v1/projects/{project.id}/scene-style-reference/generate")
+
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["code"] == 40901
+    assert "请先确认场景统一视觉设定" in body["message"]
 
 
 @pytest.mark.asyncio

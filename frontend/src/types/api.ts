@@ -61,7 +61,6 @@ export interface ProjectListResponse {
 export interface ProjectCreateRequest {
   name: string;
   story: string;
-  genre?: string | null;
   ratio?: string;
   setup_params?: string[] | null;
 }
@@ -74,7 +73,6 @@ export interface ProjectCreateResponse {
 
 export interface ProjectUpdateRequest {
   name?: string;
-  genre?: string | null;
   ratio?: string;
   setup_params?: string[] | null;
 }
@@ -225,6 +223,8 @@ export interface ShotVideoSubmitRequest {
   duration?: number;
   resolution: ShotVideoResolution;
   model_type: ShotVideoModelType;
+  generate_audio?: boolean;
+  reference_audio_url?: string | null;
 }
 
 export interface ShotVideoVersionRead {
@@ -364,6 +364,20 @@ export interface CharacterOut {
   description: string | null;
   meta: string[]; // 后端已格式化;含 "人像库:Active" 等 tag
   reference_image_url: string | null; // aggregate 层拼好的 OBS 公网 URL
+  full_body_image_url?: string | null;
+  headshot_image_url?: string | null;
+  turnaround_image_url?: string | null;
+  is_humanoid?: boolean;
+  voice_profile?: { description?: string; enabled?: boolean; source?: string } | null;
+  voice_reference_audio_url?: string | null;
+  voice_asset_id?: string | null;
+  image_prompts?: CharacterImagePrompts | null;
+}
+
+export interface CharacterImagePrompts {
+  full_body?: string | null;
+  headshot?: string | null;
+  turnaround?: string | null;
 }
 
 export interface CharacterUpdate {

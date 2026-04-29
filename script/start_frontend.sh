@@ -2,7 +2,7 @@
 # script/start_frontend.sh
 # 启动前端 Vite 开发服务器并将日志重定向到 logs/frontend.log
 
-PROJECT_ROOT="/Users/macbook/Documents/trae_projects/comic-drama-platform"
+PROJECT_ROOT="${COMIC_DRAMA_PROJECT_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$PROJECT_ROOT/frontend"
 
 echo "正在启动前端 Vite 服务..."

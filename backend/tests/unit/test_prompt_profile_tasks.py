@@ -30,6 +30,20 @@ def test_character_prompt_profile_messages_include_project_context():
     assert "冷雨" in text
 
 
+def test_character_prompt_profile_messages_request_portrait_character_only_no_environment_fields():
+    text = _joined(build_character_prompt_profile_messages(_project()))
+
+    assert "9:16竖屏" in text
+    assert "portrait_layout" in text
+    assert "visual_style" in text
+    assert "palette_lighting" in text
+    assert "character_rules" in text
+    assert "world_era" not in text
+    assert "scene_rules" not in text
+    assert "环境描写" in text
+    assert "不要写入任何环境" in text
+
+
 def test_scene_prompt_profile_messages_include_project_context():
     text = _joined(build_scene_prompt_profile_messages(_project()))
 

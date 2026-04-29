@@ -209,7 +209,9 @@ describe("workbench M3b render actions", () => {
         image_url: "https://img"
       }],
       resolution: "480p",
-      model_type: "fast"
+      model_type: "fast",
+      generate_audio: true,
+      reference_audio_url: null
     });
   });
 

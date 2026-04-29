@@ -19,6 +19,11 @@ class StyleReferenceService:
             raise ApiError(40401, "项目不存在", http_status=404)
 
         assert_asset_editable(project, kind)
+        if kind == "scene" and not (
+            isinstance(project.scene_prompt_profile_applied, dict)
+            and str(project.scene_prompt_profile_applied.get("prompt") or "").strip()
+        ):
+            raise ApiError(40901, "请先确认场景统一视觉设定后再生成场景参考图", http_status=409)
         job_kind = f"gen_{kind}_style_reference"
 
         existing = (

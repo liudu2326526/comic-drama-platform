@@ -9,6 +9,7 @@ export interface JobPollingHandlers {
   onProgress?: (job: JobState) => void;
   onSuccess: (job: JobState) => void;
   onError: (job: JobState | null, err?: unknown) => void;
+  onCanceled?: (job: JobState) => void;
 }
 
 interface JobPollingHandle {
@@ -53,6 +54,10 @@ export function useJobPolling(
       if (TERMINAL.has(next.status)) {
         cancel();
         if (next.status === "succeeded") handlers.onSuccess(next);
+        else if (next.status === "canceled") {
+          if (handlers.onCanceled) handlers.onCanceled(next);
+          else handlers.onError(next);
+        }
         else handlers.onError(next);
         return;
       }

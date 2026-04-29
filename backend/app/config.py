@@ -39,6 +39,20 @@ class Settings(BaseSettings):
     ark_video_model_standard: str = "doubao-seedance-2-0-260128"
     ark_video_model_fast: str = "doubao-seedance-2-0-fast-260128"
     ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+
+    # APIMart GPT-Image-2: character style/reference image generation
+    apimart_api_key: str = ""
+    apimart_base_url: str = "https://api.apimart.ai"
+    apimart_image_model: str = "gpt-image-2"
+    apimart_image_quality: str = "low"
+    apimart_image_output_format: str = "png"
+    apimart_poll_interval_sec: float = 5.0
+    apimart_poll_timeout_sec: float = 300.0
+
+    # OpenAI-compatible aliases for deployments that already use OPENAI_IMAGE_*
+    openai_image_api_key: str = ""
+    openai_image_base_url: str = ""
+    openai_image_model: str = ""
     ark_video_default_duration: int = 5
     ark_video_default_resolution: str = "720p"
     ark_video_generate_audio: bool = False

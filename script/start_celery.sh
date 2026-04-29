@@ -2,7 +2,7 @@
 # script/start_celery.sh
 # 启动 Celery Workers 并将日志重定向到 logs/celery.log
 
-PROJECT_ROOT="/Users/macbook/Documents/trae_projects/comic-drama-platform"
+PROJECT_ROOT="${COMIC_DRAMA_PROJECT_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$PROJECT_ROOT/backend"
 
 echo "正在启动 Celery Workers (ai, video)..."

@@ -27,7 +27,7 @@ async def test_character_style_reference_task_persists_project_state(db_session,
         assert kind == "character_style_reference"
         return f"projects/{project_id}/{kind}/ref.png"
 
-    monkeypatch.setattr("app.tasks.ai.gen_style_reference.get_volcano_client", lambda: fake_client)
+    monkeypatch.setattr("app.tasks.ai.gen_style_reference.get_character_image_client", lambda: fake_client)
     monkeypatch.setattr("app.tasks.ai.gen_style_reference.persist_generated_asset", fake_persist_generated_asset)
 
     await run_character_style_reference(project.id, job.id, session=db_session)
@@ -37,6 +37,9 @@ async def test_character_style_reference_task_persists_project_state(db_session,
     assert project.character_style_reference_status == "succeeded"
     assert project.character_style_reference_image_url.endswith("/character_style_reference/ref.png")
     assert "角色风格母版" in project.character_style_reference_prompt
+    assert "9:16竖屏" in project.character_style_reference_prompt
+    assert fake_client.calls[0]["model"] == "gpt-image-2"
+    assert fake_client.calls[0]["size"] == "768x1344"
     assert job.status == "succeeded"
 
 

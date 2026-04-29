@@ -222,17 +222,11 @@ async def update_job_progress(
     """唯一允许写 jobs.status/progress/done/total 的函数。"""
     from app.domain.models import Job
 
-    job = await session.get(Job, job_id)
+    job = await session.get(Job, job_id, populate_existing=True)
     if job is None:
         raise InvalidTransition("unknown_job", job_id, "job 不存在")
-    if done is not None:
-        job.done = done
-    if total is not None:
-        job.total = total
-    if progress is not None:
-        job.progress = max(0, min(100, progress))
-    if error_msg is not None:
-        job.error_msg = error_msg
+    if job.status == "canceled" and status is None:
+        return job
     if status is not None:
         # 简单线性校验:queued→running→(succeeded|failed|canceled)
         allowed: dict[str, set[str]] = {
@@ -244,10 +238,27 @@ async def update_job_progress(
         }
         if status not in allowed.get(job.status, set()) and status != job.status:
             raise InvalidTransition(job.status, status, "非法 job 状态跃迁")
+    if done is not None:
+        job.done = done
+    if total is not None:
+        job.total = total
+    if progress is not None:
+        job.progress = max(0, min(100, progress))
+    if error_msg is not None:
+        job.error_msg = error_msg
+    if status is not None:
         job.status = str(status)
         if status in {"succeeded", "failed", "canceled"}:
             job.finished_at = datetime.utcnow()
     return job
+
+
+async def is_job_canceled(session: AsyncSession, job_id: str) -> bool:
+    from app.domain.models import Job
+
+    with session.no_autoflush:
+        job = await session.get(Job, job_id, populate_existing=True)
+    return job is not None and job.status == "canceled"
 
 
 async def count_project_storyboards(session: AsyncSession, project_id: str) -> int:
