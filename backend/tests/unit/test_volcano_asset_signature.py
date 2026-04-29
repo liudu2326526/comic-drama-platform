@@ -1,7 +1,6 @@
 import json
-import pytest
 from app.infra.volcano_asset_client import (
-    build_canonical_request, calc_signature, sign,
+    build_canonical_request, sign,
 )
 
 def test_signature_matches_official_demo():

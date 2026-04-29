@@ -2,7 +2,7 @@ import pytest
 
 from tests.integration.test_shot_render_api import seed_renderable_project
 
-from app.domain.models import Job, ShotVideoRender
+from app.domain.models import ShotVideoRender
 from app.domain.services.job_service import JobService
 from app.infra.ulid import new_id
 

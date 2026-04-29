@@ -1,12 +1,10 @@
-import asyncio
 import json
 import pytest
-import respx
 import httpx
 
 from app.infra.volcano_client import RealVolcanoClient
 from app.infra.volcano_errors import (
-    VolcanoRateLimitError, VolcanoAuthError, VolcanoServerError,
+    VolcanoAuthError,
 )
 
 

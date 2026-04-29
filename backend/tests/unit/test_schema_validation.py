@@ -1,7 +1,9 @@
 import pytest
 from pydantic import ValidationError
 
+from app.domain.schemas import GenerateJobAck
 from app.domain.schemas.project import ProjectCreate, ProjectUpdate
+from app.domain.schemas.shot_render import RenderDraftRead, RenderSubmitRequest, RenderVersionRead
 
 
 class TestProjectCreate:
@@ -65,10 +67,6 @@ class TestProjectUpdate:
     def test_setup_params_dict_rejected(self):
         with pytest.raises(ValidationError):
             ProjectUpdate(setup_params={"era": "古风"})  # type: ignore[arg-type]
-
-
-from app.domain.schemas import GenerateJobAck
-from app.domain.schemas.shot_render import RenderDraftRead, RenderSubmitRequest, RenderVersionRead
 
 
 def test_single_render_ack_reuses_generate_job_ack_shape():

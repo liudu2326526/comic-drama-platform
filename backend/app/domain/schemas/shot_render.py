@@ -39,7 +39,7 @@ class RenderDraftRead(BaseModel):
 class RenderSubmitReference(BaseModel):
     id: str
     kind: str
-    source_id: str
+    source_id: str | None = None
     name: str
     image_url: str
     alias: str | None = None

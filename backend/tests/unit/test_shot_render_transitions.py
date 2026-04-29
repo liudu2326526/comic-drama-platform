@@ -2,7 +2,6 @@ import pytest
 
 from app.pipeline.transitions import (
     InvalidTransition,
-    mark_shot_generating,
     mark_shot_locked,
     mark_shot_render_failed,
     mark_shot_render_running,

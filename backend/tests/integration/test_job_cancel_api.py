@@ -59,6 +59,7 @@ async def test_canceled_job_cannot_be_overwritten_by_stale_worker_session(client
             error_msg="stale worker update",
         )
 
+    await db_session.rollback()
     await db_session.refresh(job)
     assert job.status == "canceled"
     assert job.progress == 0

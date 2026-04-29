@@ -24,6 +24,12 @@ async def test_render_shot_video_task_persists_video_and_last_frame(client, db_s
             "source_id": "scene01",
             "name": "东宫",
             "image_url": "https://example.com/scene.png",
+        }, {
+            "id": "character:1",
+            "kind": "character",
+            "source_id": "char01",
+            "name": "秦昭",
+            "image_url": "https://example.com/char.png",
         }],
         duration=5,
         resolution="720p",

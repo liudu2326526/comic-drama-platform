@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 
 from app.infra.db import get_session_factory
